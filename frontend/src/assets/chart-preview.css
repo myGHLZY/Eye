@@ -1,0 +1,17 @@
+.pending-preview {
+  position: relative;
+  isolation: isolate;
+}
+
+.pending-preview img {
+  /* filter: grayscale(1); */
+  filter: none;
+}
+
+.pending-preview::after {
+  position: absolute;
+  inset: 0;
+  background: rgb(0 0 0 / 8%);
+  content: '';
+  pointer-events: none;
+}

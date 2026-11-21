@@ -1,9 +1,12 @@
 import Vue from 'vue'
 import VueRouter from 'vue-router'
-import MainView from '../views/MainView.vue'
+import MainView, { mainRoutes } from '../views/MainView.vue'
 
 Vue.use(VueRouter)
 
 export default new VueRouter({
-  routes: [{ path: '/', name: 'main', component: MainView }],
+  routes: [{ path: '/', component: MainView, children: mainRoutes }],
+  scrollBehavior(_to, _from, savedPosition) {
+    return savedPosition || { x: 0, y: 0 }
+  },
 })
