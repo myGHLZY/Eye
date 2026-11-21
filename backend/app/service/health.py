@@ -1,4 +1,4 @@
-from eye.entity.health import HealthStatus
+from app.entity.health import HealthStatus
 
 
 def get_health() -> HealthStatus:

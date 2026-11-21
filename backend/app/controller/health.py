@@ -1,7 +1,7 @@
 from flask import Blueprint
 
-from eye.service.health import get_health
-from eye.util.response import ok
+from app.service.health import get_health
+from app.util.response import ok
 
 blueprint = Blueprint("health", __name__, url_prefix="/api")
 

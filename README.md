@@ -7,13 +7,14 @@ Eye 是数据库可视化项目的 Flask 后端。当前提供后端分层结构
 | 路径 | 职责 |
 | --- | --- |
 | `backend/wsgi.py` | Flask 应用入口 |
-| `backend/eye/controller/` | HTTP 路由与请求处理 |
-| `backend/eye/service/` | 应用业务逻辑 |
-| `backend/eye/entity/` | 业务实体 |
-| `backend/eye/dao/` | 数据读取和持久化 |
-| `backend/eye/mapper/` | 数据库查询与记录映射 |
-| `backend/eye/config/` | 环境配置与 MySQL 连接引擎 |
-| `backend/eye/util/` | 通用响应等工具 |
+| `backend/app/controller/` | HTTP 路由与请求处理 |
+| `backend/app/service/` | 应用业务逻辑 |
+| `backend/app/entity/` | 业务实体 |
+| `backend/app/dao/` | 数据读取和持久化 |
+| `backend/app/mapper/` | 数据库查询与记录映射 |
+| `backend/app/config/` | 环境配置与 MySQL 连接引擎 |
+| `backend/app/util/` | 通用响应等工具 |
+| `backend/test/` | 后端测试 |
 
 ## 启动
 
@@ -24,10 +25,10 @@ cd backend
 python3.12 -m venv .venv
 source .venv/bin/activate
 python -m pip install -r requirements.txt
-python -m flask --app wsgi run --host 127.0.0.1 --port 5000
+python wsgi.py
 ```
 
-在另一个终端执行 `curl http://127.0.0.1:5000/api/health`，预期 HTTP 200，返回 `{"data":{"status":"ok"}}`。
+服务监听 `0.0.0.0:5001`。在另一个终端执行 `curl http://127.0.0.1:5001/api/health`，预期 HTTP 200，返回 `{"data":{"status":"ok"}}`。
 
 ## 配置
 
@@ -42,7 +43,7 @@ python -m flask --app wsgi run --host 127.0.0.1 --port 5000
 
 ```bash
 python -m pip install -r requirements.txt
-python -m flask --app wsgi db-check
+python -m unittest -v test.test_database
 ```
 
-命令直接连接配置的 MySQL 并执行 `SELECT 1`，无需先启动 Flask 服务。成功时输出 `MySQL 连接成功（SELECT 1）。`，失败时返回非零退出码和简短提示。HTTP 接口 `/api/health` 检查 Flask 进程状态，数据库连接请用 `db-check` 验证。
+测试文件位于 `backend/test/test_database.py`。它直接连接配置的 MySQL 并执行 `SELECT 1`，无需启动 Flask 服务。成功时输出 `OK`，失败时输出简短提示并返回非零退出码。
