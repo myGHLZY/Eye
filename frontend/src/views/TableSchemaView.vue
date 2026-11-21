@@ -1,5 +1,28 @@
 <template>
-  <section class="schema-browser">
+  <section v-if="diagramVisible" key="diagram" class="schema-browser diagram-page">
+    <div class="schema-toolbar">
+      <el-button size="small" icon="el-icon-arrow-left" @click="closeDiagram">返回表与关系</el-button>
+    </div>
+    <p v-if="diagramLoading" role="status">正在读取全库结构…</p>
+    <template v-else-if="diagramError">
+      <el-alert :title="diagramError" type="error" :closable="false" show-icon />
+      <el-button class="diagram-retry" size="small" @click="loadDiagram">重新加载</el-button>
+    </template>
+    <template v-else-if="diagram">
+      <p class="diagram-summary">
+        <strong>{{ diagram.database }}</strong> · {{ diagram.tables.length }} 张表 · {{ diagram.relations.length }} 条外键约束
+      </p>
+      <table-relations-graph
+        v-if="diagram.tables.length"
+        :detail="diagram"
+        :layout-database="diagramLayout"
+        @select-table="openDiagramTable"
+      />
+      <p v-else-if="!diagram.tables.length" role="status">当前数据库中没有可查看的表。</p>
+    </template>
+  </section>
+
+  <section v-else key="tables" class="schema-browser">
     <div class="schema-toolbar">
       <span v-if="database">当前数据库 <strong>{{ database }}</strong></span>
       <div class="schema-actions">
@@ -56,8 +79,8 @@
                     <th scope="row">{{ column.name }}</th>
                     <td>{{ column.type }}</td>
                     <td class="column-keys">
-                      <el-tag v-if="column.primaryKey" size="mini">主键</el-tag>
-                      <el-tag v-if="column.foreignKey" size="mini" type="warning">外键</el-tag>
+                      <el-tag v-if="column.primaryKey" size="mini" type="danger">主键</el-tag>
+                      <el-tag v-if="column.foreignKey" size="mini" type="success">外键</el-tag>
                       <span v-if="!column.primaryKey && !column.foreignKey">—</span>
                     </td>
                     <td>{{ column.nullable ? '是' : '否' }}</td>
@@ -79,40 +102,12 @@
         </el-tabs>
       </div>
     </div>
-
-    <el-dialog
-      title="数据库 ER 图"
-      :visible.sync="diagramVisible"
-      :close-on-click-modal="false"
-      fullscreen
-      @opened="diagramReady = true"
-      @close="resetDiagram"
-    >
-      <p v-if="diagramLoading" role="status">正在读取全库结构…</p>
-      <template v-else-if="diagramError">
-        <el-alert :title="diagramError" type="error" :closable="false" show-icon />
-        <el-button class="diagram-retry" size="small" @click="loadDiagram">重新加载</el-button>
-      </template>
-      <template v-else-if="diagram">
-        <p class="diagram-summary">
-          <strong>{{ diagram.database }}</strong> · {{ diagram.tables.length }} 张表 · {{ diagram.relations.length }} 条外键约束
-        </p>
-        <table-relations-graph
-          v-if="diagramReady && diagram.tables.length"
-          :detail="diagram"
-          :layout-database="diagramLayout"
-          @select-table="openDiagramTable"
-        />
-        <p v-else-if="!diagram.tables.length" role="status">当前数据库中没有可查看的表。</p>
-      </template>
-    </el-dialog>
   </section>
 </template>
 
 <script>
 import ElAlert from 'element-ui/lib/alert'
 import ElButton from 'element-ui/lib/button'
-import ElDialog from 'element-ui/lib/dialog'
 import ElInput from 'element-ui/lib/input'
 import ElTabPane from 'element-ui/lib/tab-pane'
 import ElTabs from 'element-ui/lib/tabs'
@@ -121,7 +116,6 @@ import { getDatabaseDiagram, getDatabaseTable, listDatabaseTables } from '../api
 
 import 'element-ui/lib/theme-chalk/alert.css'
 import 'element-ui/lib/theme-chalk/button.css'
-import 'element-ui/lib/theme-chalk/dialog.css'
 import 'element-ui/lib/theme-chalk/input.css'
 import 'element-ui/lib/theme-chalk/tab-pane.css'
 import 'element-ui/lib/theme-chalk/tabs.css'
@@ -130,7 +124,7 @@ import 'element-ui/lib/theme-chalk/tag.css'
 export default {
   name: 'TableSchemaView',
   components: {
-    ElAlert, ElButton, ElDialog, ElInput, ElTabs, ElTabPane, ElTag,
+    ElAlert, ElButton, ElInput, ElTabs, ElTabPane, ElTag,
     TableRelationsGraph: () => import('../components/TableRelationsGraph.vue'),
   },
   data() {
@@ -145,8 +139,6 @@ export default {
       loadingDetail: false,
       listError: '',
       detailError: '',
-      diagramVisible: false,
-      diagramReady: false,
       diagramLoading: false,
       diagramError: '',
       diagram: null,
@@ -154,15 +146,32 @@ export default {
     }
   },
   computed: {
+    diagramVisible() {
+      return this.$route.query.view === 'er'
+    },
     visibleTables() {
       const term = this.search.trim().toLowerCase()
       return this.tables.filter(name => name.toLowerCase().includes(term))
     },
   },
+  watch: {
+    diagramVisible(visible) {
+      if (visible) {
+        this.loadDiagram()
+      } else {
+        this.resetDiagram()
+        if (!this.database && !this.loadingTables) this.refreshTables()
+      }
+    },
+  },
   created() {
     this._tableRequest = 0
     this._diagramRequest = 0
-    this.refreshTables()
+    if (this.diagramVisible) {
+      this.loadDiagram()
+    } else {
+      this.refreshTables()
+    }
   },
   beforeDestroy() {
     this._tableRequest += 1
@@ -170,8 +179,15 @@ export default {
   },
   methods: {
     openDiagram() {
-      this.diagramVisible = true
-      this.loadDiagram()
+      this.$router.push({
+        name: 'table-schema',
+        query: { ...this.$route.query, view: 'er' },
+      })
+    },
+    closeDiagram() {
+      const query = { ...this.$route.query }
+      delete query.view
+      this.$router.replace({ name: 'table-schema', query })
     },
     async loadDiagram() {
       const request = ++this._diagramRequest
@@ -194,7 +210,6 @@ export default {
     },
     resetDiagram() {
       this._diagramRequest += 1
-      this.diagramReady = false
       this.diagramLoading = false
       this.diagramError = ''
       this.diagram = null
@@ -202,7 +217,7 @@ export default {
     },
     openDiagramTable(name) {
       const database = this.diagram.database
-      this.diagramVisible = false
+      this.closeDiagram()
       this.activeTab = 'columns'
       if (this.database === database && this.tables.includes(name)) {
         this.openRelatedTable(name)
@@ -292,6 +307,10 @@ export default {
 
 .schema-actions .el-button + .el-button {
   margin-left: 0;
+}
+
+.diagram-page .schema-toolbar {
+  justify-content: flex-start;
 }
 
 .diagram-summary {

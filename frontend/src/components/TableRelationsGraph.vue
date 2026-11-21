@@ -1,7 +1,11 @@
 <template>
   <section :class="{ overview }" aria-label="外键关系图">
     <div class="graph-toolbar">
-      <span v-if="overview">PK 主键 · FK 外键 · 连线标注外键字段名</span>
+      <span v-if="overview" class="key-legend">
+        <span><strong class="pk-legend">PK</strong> 主键</span>
+        <span><strong class="fk-legend">FK</strong> 外键</span>
+        <span>连线标注外键字段名</span>
+      </span>
       <span v-else>连线由外键指向被引用字段，点击同库表可查看其关系。</span>
       <el-button-group>
         <el-button size="mini" aria-label="缩小关系图" @click="zoom(-0.15)">缩小</el-button>
@@ -42,8 +46,22 @@ import '@antv/x6/dist/index.css'
 import 'element-ui/lib/theme-chalk/button.css'
 import 'element-ui/lib/theme-chalk/button-group.css'
 
+const erTableShape = 'eye-er-table'
+Graph.registerNode(erTableShape, {}, true)
+
 const detailNodeWidth = 224
-const overviewNodeWidth = 352
+const overviewMinimumWidth = 352
+const nodePadding = 12
+const columnGap = 14
+const badgeWidth = 26
+const badgeGap = 4
+const keyColumnWidth = badgeWidth * 2 + badgeGap
+const fieldFontSize = 12
+const titleFontSize = 13
+const keyStyles = {
+  PK: { background: '#fee2e2', color: '#a12629' },
+  FK: { background: '#dcfce7', color: '#19633a' },
+}
 const headerHeight = 34
 const rowHeight = 24
 const horizontalGap = 130
@@ -65,16 +83,67 @@ function shorten(label, limit) {
   return label
 }
 
+function createTextMeasurer() {
+  const context = document.createElement('canvas').getContext('2d')
+  return (text, size = fieldFontSize, weight = 400) => {
+    context.font = `${weight} ${size}px monospace`
+    return Math.ceil(context.measureText(text).width)
+  }
+}
+
+function fitText(text, availableWidth, measure) {
+  const displayText = text.replace(/[\t\r\n]+/g, ' ')
+  if (measure(displayText) <= availableWidth) {
+    return displayText === text ? { text } : { text: displayText, title: text }
+  }
+  const characters = Array.from(displayText)
+  let start = 0
+  let end = characters.length
+  while (start < end) {
+    const length = Math.ceil((start + end) / 2)
+    if (measure(characters.slice(0, length).join('') + '…') <= availableWidth) {
+      start = length
+    } else {
+      end = length - 1
+    }
+  }
+  return { text: characters.slice(0, start).join('') + '…', title: text }
+}
+
+function sizeTable(table, database, overview, measure) {
+  table.label = table.schema === database ? table.table : `${table.schema}.${table.table}`
+  table.height = headerHeight + rowHeight * table.fields.size
+  if (!overview) {
+    table.width = detailNodeWidth
+    table.nameWidth = detailNodeWidth - 2 * nodePadding - keyColumnWidth - columnGap
+    return
+  }
+
+  let nameWidth = 108
+  let typeWidth = 86
+  for (const [name, { type }] of table.fields) {
+    nameWidth = Math.max(nameWidth, Math.min(270, measure(name) + 4))
+    typeWidth = Math.max(typeWidth, Math.min(225, measure(type || '') + 4))
+  }
+  table.nameWidth = nameWidth
+  table.typeWidth = typeWidth
+  table.width = Math.max(
+    overviewMinimumWidth,
+    Math.min(580, measure(table.label, titleFontSize, 600) + 4) + 2 * nodePadding,
+    nameWidth + typeWidth + keyColumnWidth + 2 * (nodePadding + columnGap),
+  )
+}
+
 function getGraphData(detail, layoutDatabase) {
   const overview = Boolean(layoutDatabase)
   const tables = new Map()
-  const width = overview ? overviewNodeWidth : detailNodeWidth
+  const measure = createTextMeasurer()
 
   function addTable(identity, group) {
     const key = tableKey(identity)
     if (!tables.has(key)) {
       tables.set(key, {
-        ...identity, group, id: `table-${tables.size}`, width, fields: new Map(), connected: new Set(),
+        ...identity, group, id: `table-${tables.size}`, fields: new Map(), connected: new Set(),
       })
     }
     return tables.get(key)
@@ -119,7 +188,7 @@ function getGraphData(detail, layoutDatabase) {
   }
 
   const allTables = [...tables.values()]
-  for (const table of allTables) table.height = headerHeight + rowHeight * table.fields.size
+  for (const table of allTables) sizeTable(table, detail.database, overview, measure)
   if (overview) {
     const positions = layoutDatabase(allTables, links)
     for (const table of allTables) Object.assign(table, positions.get(table.id))
@@ -127,12 +196,12 @@ function getGraphData(detail, layoutDatabase) {
     layoutTableNeighborhood(allTables)
   }
 
-  const nodes = allTables.map(table => makeNode(table, detail.database, table === selected, overview))
+  const nodes = allTables.map(table => makeNode(table, table === selected, overview, measure))
 
   const edges = detail.relations.flatMap((relation, index) => {
     const [source, target] = links[index]
     const sameTable = source === target
-    const sourceSide = source.x <= target.x ? 'right' : 'left'
+    const sourceSide = source.x + source.width / 2 <= target.x + target.width / 2 ? 'right' : 'left'
     const targetSide = sameTable ? 'right' : sourceSide === 'right' ? 'left' : 'right'
 
     return relation.columns.map((pair, pairIndex) => {
@@ -205,9 +274,8 @@ function layoutTableNeighborhood(tables) {
   })
 }
 
-function makeNode(table, database, selected, overview) {
-  const { width, height } = table
-  const label = table.schema === database ? table.table : `${table.schema}.${table.table}`
+function makeNode(table, selected, overview, measure) {
+  const { width, height, label, nameWidth, typeWidth } = table
   const markup = [
     { tagName: 'rect', selector: 'body' },
     { tagName: 'rect', selector: 'header' },
@@ -223,8 +291,9 @@ function makeNode(table, database, selected, overview) {
       fill: selected || overview ? '#e3efff' : '#eef3f9',
     },
     title: {
-      text: shorten(label, overview ? 36 : 25), x: 12, y: headerHeight / 2, textVerticalAnchor: 'middle',
-      fontSize: 13, fontWeight: 600, fontFamily: 'monospace', fill: '#14233b',
+      ...fitText(label, width - 2 * nodePadding - 4, text => measure(text, titleFontSize, 600)),
+      x: nodePadding, y: headerHeight / 2, textVerticalAnchor: 'middle',
+      fontSize: titleFontSize, fontWeight: 600, fontFamily: 'monospace', fill: '#14233b',
     },
   }
   const ports = []
@@ -234,25 +303,35 @@ function makeNode(table, database, selected, overview) {
   for (const [field, { key, type }] of table.fields) {
     const y = fieldBaseline(index)
     const name = `name${index}`
-    const badge = `key${index}`
     table.fieldRows.set(field, index)
-    markup.push({ tagName: 'text', selector: name }, { tagName: 'text', selector: badge })
+    markup.push({ tagName: 'text', selector: name })
     attrs[name] = {
-      text: shorten(field, 19), x: 12, y, textVerticalAnchor: 'middle',
-      fontSize: 12, fontFamily: 'monospace', fill: '#263f63',
-    }
-    attrs[badge] = {
-      text: key, x: width - 10, y, textAnchor: 'end', textVerticalAnchor: 'middle',
-      fontSize: 10, fontWeight: 600, fill: '#235a9f',
+      ...fitText(field, nameWidth - 4, measure),
+      x: nodePadding, y, textVerticalAnchor: 'middle',
+      fontSize: fieldFontSize, fontFamily: 'monospace', fill: '#263f63',
     }
     if (overview) {
       const typeSelector = `type${index}`
       markup.push({ tagName: 'text', selector: typeSelector })
       attrs[typeSelector] = {
-        text: shorten(type || '', 21), x: 155, y, textVerticalAnchor: 'middle',
-        fontSize: 12, fontFamily: 'monospace', fill: '#52647d',
+        ...fitText(type || '', typeWidth - 4, measure),
+        x: nodePadding + nameWidth + columnGap, y, textVerticalAnchor: 'middle',
+        fontSize: fieldFontSize, fontFamily: 'monospace', fill: '#52647d',
       }
     }
+    const keys = key.split('/').filter(Boolean)
+    keys.forEach((label, position) => {
+      const style = keyStyles[label]
+      const x = width - nodePadding - (keys.length - position) * (badgeWidth + badgeGap) + badgeGap
+      const badge = `badge${index}${label}`
+      const badgeText = `badgeText${index}${label}`
+      markup.push({ tagName: 'rect', selector: badge }, { tagName: 'text', selector: badgeText })
+      attrs[badge] = { x, y: y - 8, width: badgeWidth, height: 16, rx: 4, fill: style.background }
+      attrs[badgeText] = {
+        text: label, x: x + badgeWidth / 2, y, textAnchor: 'middle', textVerticalAnchor: 'middle',
+        fontSize: 10, fontWeight: 600, fill: style.color,
+      }
+    })
     if (table.connected.has(field)) {
       ports.push(
         { id: portId(index, 'left'), group: 'fields', args: { x: 0, y } },
@@ -264,7 +343,7 @@ function makeNode(table, database, selected, overview) {
 
   return {
     id: table.id,
-    shape: 'rect',
+    shape: erTableShape,
     x: table.x,
     y: table.y,
     width,
@@ -366,8 +445,31 @@ export default {
 }
 
 .overview .graph-frame {
-  height: 70vh;
-  min-height: 320px;
+  height: clamp(320px, calc(100vh - 256px), 900px);
+}
+
+.key-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+}
+
+.pk-legend,
+.fk-legend {
+  display: inline-block;
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 11px;
+}
+
+.pk-legend {
+  color: #a12629;
+  background: #fee2e2;
+}
+
+.fk-legend {
+  color: #19633a;
+  background: #dcfce7;
 }
 
 .no-relations {

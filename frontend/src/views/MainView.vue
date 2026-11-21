@@ -57,12 +57,13 @@
             {{ $route.meta.section }}
           </el-breadcrumb-item>
           <el-breadcrumb-item>{{ $route.meta.title }}</el-breadcrumb-item>
+          <el-breadcrumb-item v-if="showDatabaseDiagram">ER 图</el-breadcrumb-item>
         </el-breadcrumb>
       </el-header>
 
       <el-main class="eye-main" aria-labelledby="page-title">
-        <div class="main-inner">
-          <h1 id="page-title">{{ $route.meta.title }}</h1>
+        <div class="main-inner" :class="{ 'main-inner-wide': showDatabaseDiagram }">
+          <h1 id="page-title">{{ showDatabaseDiagram ? '数据库 ER 图' : $route.meta.title }}</h1>
           <router-view />
         </div>
       </el-main>
@@ -214,6 +215,9 @@ export default {
     return { navigation }
   },
   computed: {
+    showDatabaseDiagram() {
+      return this.$route.name === 'table-schema' && this.$route.query.view === 'er'
+    },
     activeMenu() {
       if (this.$route.name === 'chart-workbench') {
         const chart = findChartExample(this.$route.params.chartId)
@@ -307,6 +311,10 @@ export default {
 .main-inner {
   max-width: 1120px;
   margin: 0 auto;
+}
+
+.main-inner-wide {
+  max-width: none;
 }
 
 h1 {
