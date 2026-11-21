@@ -1,3 +1,5 @@
+from collections.abc import Mapping
+
 from flask import Flask, current_app
 from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine, URL
@@ -9,13 +11,14 @@ class DatabaseConfigurationError(ValueError):
 
 def init_database(app: Flask) -> None:
     try:
-        url = _database_url(app)
+        app.extensions["eye_database"] = create_database_engine(app.config)
     except DatabaseConfigurationError as error:
         app.extensions["eye_database"] = str(error)
-        return
 
-    app.extensions["eye_database"] = create_engine(
-        url,
+
+def create_database_engine(settings: Mapping[str, str]) -> Engine:
+    return create_engine(
+        _database_url(settings),
         pool_pre_ping=True,
         hide_parameters=True,
         connect_args={"connect_timeout": 5, "read_timeout": 10, "write_timeout": 10},
@@ -29,8 +32,7 @@ def get_database_engine() -> Engine:
     return database
 
 
-def _database_url(app: Flask) -> URL:
-    config = app.config
+def _database_url(config: Mapping[str, str]) -> URL:
     required_fields = ("MYSQL_HOST", "MYSQL_DATABASE", "MYSQL_USER")
     missing_fields = [field for field in required_fields if not config[field].strip()]
     if missing_fields:

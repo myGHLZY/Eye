@@ -1,8 +1,9 @@
 from flask import Flask
 
-from app.config.database import init_database
 from app.config.settings import load_settings
+from app.controller.database import blueprint as database_blueprint
 from app.controller.health import blueprint as health_blueprint
+from app.database.database import init_database
 
 
 def create_app() -> Flask:
@@ -11,4 +12,5 @@ def create_app() -> Flask:
     app.logger.setLevel(app.config["LOG_LEVEL"])
     init_database(app)
     app.register_blueprint(health_blueprint)
+    app.register_blueprint(database_blueprint)
     return app

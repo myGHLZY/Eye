@@ -29,9 +29,9 @@ import 'element-ui/lib/theme-chalk/card.css'
 const shortcuts = [
   {
     name: 'data-sources',
-    title: '数据源管理',
+    title: '数据库连接',
     icon: 'el-icon-connection',
-    description: '管理用于分析的数据库连接。',
+    description: '测试并保存 MySQL 连接。',
   },
   {
     name: 'table-schema',

@@ -3,7 +3,7 @@
     <el-aside width="228px" class="eye-sidebar">
       <div class="eye-brand">
         <span class="brand-icon"><i class="el-icon-s-data" aria-hidden="true"></i></span>
-        <span>Eye</span>
+        <span>EyeChart</span>
       </div>
 
       <nav aria-label="主导航">
@@ -17,7 +17,7 @@
           active-text-color="#ffffff"
         >
           <template v-for="entry in navigation">
-            <el-submenu v-if="entry.items" :key="entry.name" :index="entry.name">
+            <el-submenu v-if="entry.items" :key="`submenu-${entry.name}`" :index="entry.name">
               <template slot="title">
                 <i :class="[entry.icon, 'nav-icon']" aria-hidden="true"></i>
                 <span>{{ entry.title }}</span>
@@ -36,7 +36,7 @@
 
             <el-menu-item
               v-else
-              :key="entry.name"
+              :key="`menu-item-${entry.name}`"
               :index="entry.name"
               :route="{ name: entry.name }"
               :aria-current="activeMenu === entry.name ? 'page' : null"
@@ -113,20 +113,14 @@ const navigation = [
       {
         name: 'data-sources',
         path: 'database/sources',
-        title: '数据源管理',
-        component: () => import('./DataSourcesView.vue'),
+        title: '数据库连接',
+        component: () => import('./DatabaseConnectionView.vue'),
       },
       {
         name: 'table-schema',
         path: 'database/schema',
         title: '表与关系',
         component: () => import('./TableSchemaView.vue'),
-      },
-      {
-        name: 'data-preview',
-        path: 'database/preview',
-        title: '数据预览',
-        component: () => import('./DataPreviewView.vue'),
       },
     ],
   },
