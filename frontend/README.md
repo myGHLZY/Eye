@@ -4,10 +4,9 @@
 
 ## 启动前端
 
-需要 Node.js 18、20 或 22 及以上版本。在 VS Code 打开 Eye 仓库，在集成终端从仓库根目录执行以下命令。首次运行用 `npm ci` 安装依赖。
+需要 Node.js 18、20 或 22 及以上版本。用 VS Code 打开前端工程。桌面上的 `Eye` 就是前端工程目录，从 GitHub 检出的完整仓库中，前端工程位于 `frontend/`。在对应目录的集成终端执行以下命令。
 
 ```bash
-cd frontend
 npm ci
 npm run dev
 ```
@@ -18,7 +17,7 @@ npm run dev
 
 点击首页的「测试连接」。页面向 `GET /api/health` 发起请求，Vite 将请求代理到 `http://127.0.0.1:5111`。联调时请让 Flask 监听 `5111`，成功时页面显示 `{"data":{"status":"ok"}}`。
 
-需要给 Flask 指定端口时，可在 `backend/` 执行 `python -m flask --app wsgi run --host 127.0.0.1 --port 5111`。
+需要给 Flask 指定端口时，可在后端工程的 `backend/` 目录执行 `python -m flask --app wsgi run --host 127.0.0.1 --port 5111`。
 
 `npm run build` 会生成静态文件到 `dist/`。部署静态文件时，由站点的反向代理把同域的 `/api` 请求转发给 Flask。
 
