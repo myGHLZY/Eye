@@ -1,6 +1,6 @@
 # Eye
 
-Eye 是数据库可视化项目的 Flask 后端。当前提供后端分层结构与健康检查接口，DAO 提供基础读取接口，Mapper 为后续数据映射预留。
+Eye 是数据库可视化项目的 Flask 后端。当前提供后端分层结构、健康检查接口以及 MySQL 连接测试，DAO 提供基础读取接口，Mapper 为后续数据映射预留。
 
 ## 后端结构
 
@@ -12,7 +12,7 @@ Eye 是数据库可视化项目的 Flask 后端。当前提供后端分层结构
 | `backend/eye/entity/` | 业务实体 |
 | `backend/eye/dao/` | 数据读取和持久化 |
 | `backend/eye/mapper/` | 数据库查询与记录映射 |
-| `backend/eye/config/` | 环境配置加载 |
+| `backend/eye/config/` | 环境配置与 MySQL 连接引擎 |
 | `backend/eye/util/` | 通用响应等工具 |
 
 ## 启动
@@ -33,3 +33,16 @@ python -m flask --app wsgi run --host 127.0.0.1 --port 5000
 
 - `backend/.env.example` 是随仓库提交的脱敏模板。
 - `backend/.env` 是本机配置，由 Git 忽略。克隆后可执行 `cp backend/.env.example backend/.env` 创建。进程环境变量优先于此文件，`EYE_LOG_LEVEL` 默认为 `INFO`。
+
+## MySQL 连接测试
+
+在 `backend/.env` 填写 `MYSQL_HOST`、`MYSQL_PORT`、`MYSQL_DATABASE`、`MYSQL_USER` 和 `MYSQL_PASSWORD`。主机默认是 `127.0.0.1`，端口默认是 `3306`。数据库需已存在，账号需有访问权限。密码中含有空格或 `#` 时，可用引号包住值。
+
+在 `backend/` 下激活虚拟环境后执行。首次添加数据库支持后，先重新安装依赖。
+
+```bash
+python -m pip install -r requirements.txt
+python -m flask --app wsgi db-check
+```
+
+命令直接连接配置的 MySQL 并执行 `SELECT 1`，无需先启动 Flask 服务。成功时输出 `MySQL 连接成功（SELECT 1）。`，失败时返回非零退出码和简短提示。HTTP 接口 `/api/health` 检查 Flask 进程状态，数据库连接请用 `db-check` 验证。
