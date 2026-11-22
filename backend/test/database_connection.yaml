@@ -1,0 +1,553 @@
+openapi: 3.0.3
+info:
+  title: Eye 后端接口测试
+  version: 1.0.0
+  description: 在本机运行 Flask 后导入测试。请填写实际的 MySQL 参数，保存接口会更新后端的活动连接。
+servers:
+  - url: http://127.0.0.1:5111
+paths:
+  /api/health:
+    get:
+      summary: 健康检查
+      responses:
+        '200':
+          description: Flask 正常运行
+          content:
+            application/json:
+              example:
+                data:
+                  status: ok
+  /api/database/connection:
+    get:
+      summary: 读取后端当前的 MySQL 配置
+      responses:
+        '200':
+          description: 当前配置中的非密码字段
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    required: [host, port, database, username]
+                    properties:
+                      host:
+                        type: string
+                      port:
+                        type: integer
+                        nullable: true
+                      database:
+                        type: string
+                      username:
+                        type: string
+              example:
+                data:
+                  host: 127.0.0.1
+                  port: 3306
+                  database: eye_demo
+                  username: eye_user
+        '403':
+          $ref: '#/components/responses/LocalAccessRequired'
+    put:
+      summary: 验证并应用 MySQL 连接
+      requestBody:
+        $ref: '#/components/requestBodies/MySQLConnection'
+      responses:
+        '200':
+          description: 已切换后端活动连接并持久化配置
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Success'
+              example:
+                data:
+                  status: ok
+                  message: 数据库连接已保存并生效。
+        '400':
+          $ref: '#/components/responses/InvalidDatabaseSettings'
+        '403':
+          $ref: '#/components/responses/LocalAccessRequired'
+        '503':
+          $ref: '#/components/responses/ConnectionFailed'
+        '500':
+          $ref: '#/components/responses/SettingsWriteFailed'
+  /api/database/test-connection:
+    post:
+      summary: 测试 MySQL 连接
+      requestBody:
+        $ref: '#/components/requestBodies/MySQLConnection'
+      responses:
+        '200':
+          description: 已连接并成功执行 SELECT 1
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Success'
+              example:
+                data:
+                  status: ok
+                  message: 数据库连接测试成功。
+        '400':
+          $ref: '#/components/responses/InvalidDatabaseSettings'
+        '403':
+          $ref: '#/components/responses/LocalAccessRequired'
+        '503':
+          $ref: '#/components/responses/ConnectionFailed'
+  /api/database/connections:
+    get:
+      summary: 读取可浏览的数据库连接记录
+      responses:
+        '200':
+          description: 本地连接记录中的非密码字段
+          content:
+            application/json:
+              example:
+                data:
+                  connections:
+                    - id: example-connection-id
+                      database: agriculture
+                      host: 127.0.0.1
+                      port: 3306
+                      username: eye_user
+        '403':
+          $ref: '#/components/responses/LocalAccessRequired'
+        '500':
+          $ref: '#/components/responses/ConnectionRecordsUnavailable'
+  /api/database/connections/{connectionId}:
+    delete:
+      summary: 断开并移除指定的数据库连接
+      parameters:
+        - name: connectionId
+          in: path
+          required: true
+          description: 数据库连接列表返回的标识
+          schema:
+            type: string
+      responses:
+        '200':
+          description: 已断开连接或连接已不存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Success'
+              example:
+                data:
+                  status: ok
+                  message: 数据库连接已断开。
+        '403':
+          $ref: '#/components/responses/LocalAccessRequired'
+        '500':
+          description: 无法保存断开结果
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: DATABASE_SETTINGS_WRITE_FAILED
+                  message: 无法保存断开结果。请检查后端目录的写入权限。
+  /api/database/tables:
+    get:
+      summary: 读取当前库中的数据表
+      parameters:
+        - $ref: '#/components/parameters/ConnectionId'
+      responses:
+        '200':
+          description: 当前库名及可见基本表
+          content:
+            application/json:
+              example:
+                data:
+                  database: agriculture
+                  tables: [harvests, plots]
+        '403':
+          $ref: '#/components/responses/LocalAccessRequired'
+        '404':
+          description: 找不到指定连接，错误码 DATABASE_CONNECTION_NOT_FOUND
+        '503':
+          $ref: '#/components/responses/SchemaUnavailable'
+        '500':
+          $ref: '#/components/responses/ConnectionRecordsUnavailable'
+  /api/database/tables/detail:
+    get:
+      summary: 查看表字段与直接外键关系
+      parameters:
+        - $ref: '#/components/parameters/ConnectionId'
+        - name: name
+          in: query
+          required: true
+          schema:
+            type: string
+          example: harvests
+      responses:
+        '200':
+          description: 字段定义及引用或被引用的外键约束
+          content:
+            application/json:
+              example:
+                data:
+                  database: agriculture
+                  table: harvests
+                  columns:
+                    - name: plot_id
+                      type: INT
+                      nullable: false
+                      default: null
+                      comment: 地块
+                      primaryKey: false
+                      foreignKey: true
+                  relations:
+                    - name: fk_harvest_plot
+                      source: {schema: agriculture, table: harvests}
+                      target: {schema: agriculture, table: plots}
+                      columns:
+                        - {source: plot_id, target: id}
+        '400':
+          description: 缺少表名，错误码 TABLE_NAME_REQUIRED
+        '403':
+          $ref: '#/components/responses/LocalAccessRequired'
+        '404':
+          description: 数据表或连接不存在，错误码 TABLE_NOT_FOUND 或 DATABASE_CONNECTION_NOT_FOUND
+        '503':
+          $ref: '#/components/responses/SchemaUnavailable'
+        '500':
+          $ref: '#/components/responses/ConnectionRecordsUnavailable'
+  /api/database/schema/diagram:
+    get:
+      summary: 读取全库 ER 图
+      parameters:
+        - $ref: '#/components/parameters/ConnectionId'
+      responses:
+        '200':
+          description: 当前库可见的基本表、字段和库内外键
+          content:
+            application/json:
+              example:
+                data:
+                  database: agriculture
+                  tables:
+                    - name: plots
+                      columns:
+                        - {name: id, type: int, primaryKey: true, foreignKey: false}
+                  relations: []
+        '403':
+          $ref: '#/components/responses/LocalAccessRequired'
+        '404':
+          description: 找不到指定连接，错误码 DATABASE_CONNECTION_NOT_FOUND
+        '503':
+          $ref: '#/components/responses/SchemaUnavailable'
+        '500':
+          $ref: '#/components/responses/ConnectionRecordsUnavailable'
+
+  /api/database/charts/bar/data:
+    post:
+      summary: 查询柱状图聚合数据
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [connectionId, table, categoryColumn, aggregation]
+              properties:
+                connectionId:
+                  type: string
+                table:
+                  type: string
+                categoryColumn:
+                  type: string
+                aggregation:
+                  type: string
+                  enum: [count, sum, average, max, min, share]
+                valueColumn:
+                  type: string
+                  description: 除 count 外必填，使用数据表中的数值字段
+            example:
+              connectionId: example-connection-id
+              table: machine_hours
+              categoryColumn: machine_id
+              aggregation: share
+              valueColumn: hours
+      responses:
+        '200':
+          description: 分类及聚合数值
+          content:
+            application/json:
+              example:
+                data:
+                  points: [{label: '1', value: 75}, {label: '2', value: 25}]
+                  seriesName: hours（占比）
+                  valueUnit: '%'
+                  truncated: false
+        '400':
+          description: 无效字段、聚合方式或占比的分母为零
+        '403':
+          $ref: '#/components/responses/LocalAccessRequired'
+        '404':
+          description: 连接或数据表不存在
+        '413':
+          description: 请求体超过 32 KiB
+        '503':
+          $ref: '#/components/responses/SchemaUnavailable'
+  /api/database/charts/bar/render:
+    post:
+      summary: 渲染柱状图 PNG
+      requestBody:
+        required: true
+        content:
+          application/json:
+            example:
+              points: [{label: apple, value: 40}, {label: blueberry, value: 100}, {label: cherry, value: 30}, {label: orange, value: 55}]
+              style:
+                barColors: ['tab:red', 'tab:blue', 'tab:red', 'tab:orange']
+                barLabels: [red, blue, _red, orange]
+                title: 各类水果的供应量
+                xLabel: 水果种类
+                yLabel: 水果供应量
+                legendTitle: 水果颜色
+                barSpacing: 1.15
+                yTickBins: 5
+                showLegend: true
+                showValues: true
+                showGrid: false
+                frameMode: plot
+                frameColor: '#485b76'
+                frameWidth: 1
+                showBarOutline: true
+                barOutlineColor: '#263c5a'
+                barOutlineWidth: 1
+                figureColor: '#ffffff'
+                plotColor: '#f8faff'
+                transparentBackground: false
+                showVerticalGrid: false
+                showZeroLine: true
+                gridStyle: dashed
+                gridColor: '#e4ebf4'
+                legendPosition: bottom
+                chartSize: wide
+                dpi: 200
+                errorBars: [3, 8, null, 5]
+                significance:
+                  - {left: 0, right: 1, pValue: 0.008}
+                  - {left: 0, right: 3, label: '*'}
+      responses:
+        '200':
+          description: PNG 图像
+          headers:
+            X-Eye-Bar-Renderer:
+              description: 柱状图渲染接口版本
+              schema:
+                type: string
+                example: '3'
+          content:
+            image/png:
+              schema:
+                type: string
+                format: binary
+        '400':
+          description: 无效的绘图数据或样式
+        '403':
+          $ref: '#/components/responses/LocalAccessRequired'
+        '413':
+          description: 请求体超过 32 KiB
+
+  /api/database/charts/pie/data:
+    post:
+      summary: 查询饼图分类和值
+      requestBody:
+        required: true
+        content:
+          application/json:
+            example:
+              connectionId: example-connection-id
+              table: harvest_loads
+              categoryColumn: planting_id
+              aggregation: sum
+              valueColumn: tonnes
+      responses:
+        '200':
+          description: 饼图扇区、总量及是否合并分类
+        '400':
+          description: 字段、数值或聚合方式无法绘制饼图
+  /api/database/charts/pie/render:
+    post:
+      summary: 渲染饼图或环形图
+      requestBody:
+        required: true
+        content:
+          application/json:
+            example:
+              points: [{label: '1', value: 20}, {label: '2', value: 30}]
+              style:
+                title: 收获重量分布
+                legendPosition: right
+                labelMode: percent
+                colors: ['#1f77b4', '#ff7f0e']
+                donut: false
+      responses:
+        '200':
+          description: PNG 图像
+          content:
+            image/png:
+              schema:
+                type: string
+                format: binary
+        '400':
+          description: 无效的绘图数据或样式
+
+components:
+  parameters:
+    ConnectionId:
+      name: connectionId
+      in: query
+      required: false
+      description: 从数据库连接列表取得的标识，省略时使用当前生效的连接
+      schema:
+        type: string
+  requestBodies:
+    MySQLConnection:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/MySQLConnection'
+          examples:
+            connection:
+              summary: 填写实际连接参数
+              value:
+                host: 127.0.0.1
+                port: 3306
+                database: eye_demo
+                username: eye_user
+                password: 本地填写
+            invalidPort:
+              summary: 无效端口，预期 HTTP 400
+              value:
+                host: 127.0.0.1
+                port: 65536
+                database: eye_demo
+                username: eye_user
+            failedConnection:
+              summary: 使用运行 MySQL 的地址和一个错误密码，预期 HTTP 503
+              value:
+                host: 127.0.0.1
+                port: 3306
+                database: eye_demo
+                username: eye_user
+                password: invalid-password
+  responses:
+    ConnectionRecordsUnavailable:
+      description: 无法读取本地连接记录
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              code: DATABASE_CONNECTIONS_READ_FAILED
+              message: 无法读取本地数据库连接记录。
+    SchemaUnavailable:
+      description: 数据库未配置或无法读取表结构
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            notConfigured:
+              value:
+                error:
+                  code: DATABASE_NOT_CONFIGURED
+                  message: 请先在「数据库连接」中保存可用的 MySQL 连接。
+            readFailed:
+              value:
+                error:
+                  code: SCHEMA_READ_FAILED
+                  message: 无法读取表结构，请检查数据库连接及账号权限。
+    InvalidDatabaseSettings:
+      description: 请求参数无效
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              code: INVALID_DATABASE_SETTINGS
+              message: 端口必须是 1 到 65535 之间的整数。
+    LocalAccessRequired:
+      description: 接口仅接受本机请求
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              code: LOCAL_ACCESS_REQUIRED
+              message: 请从运行 Eye 后端的本机访问连接设置。
+    ConnectionFailed:
+      description: MySQL 连接失败
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              code: DATABASE_CONNECTION_FAILED
+              message: MySQL 拒绝登录。请检查用户名、密码和登录权限。
+    SettingsWriteFailed:
+      description: 后端无法写入本地配置
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              code: DATABASE_SETTINGS_WRITE_FAILED
+              message: 无法保存数据库设置。请检查后端目录的写入权限。
+  schemas:
+    MySQLConnection:
+      type: object
+      required: [host, port, database, username]
+      properties:
+        host:
+          type: string
+          minLength: 1
+        port:
+          type: integer
+          minimum: 1
+          maximum: 65535
+        database:
+          type: string
+          minLength: 1
+        username:
+          type: string
+          minLength: 1
+        password:
+          type: string
+          format: password
+          description: MySQL 密码，可以为空
+    Success:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [status, message]
+          properties:
+            status:
+              type: string
+              enum: [ok]
+            message:
+              type: string
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+            message:
+              type: string
