@@ -151,12 +151,13 @@ def sankey_chart_render():
 
 @blueprint.post("/charts/<any(line,scatter,heatmap):kind>/<any(data,render):action>")
 def additional_chart(kind, action):
-    """处理折线图、分组散点图和热力图的取数或渲染。"""
+    """处理折线图、散点图和热力图的取数或渲染。"""
     load, render = ADDITIONAL_CHARTS[kind]
     error_code = f"INVALID_{kind.upper()}_CHART"
     if action == "data":
         return _database_response(load, _read_json(32 * 1024), chart_error=error_code)
-    return _chart_image(render, f"{kind}-chart.png", error_code, maximum=96 * 1024)
+    maximum = 384 * 1024 if kind == "scatter" else 96 * 1024
+    return _chart_image(render, f"{kind}-chart.png", error_code, maximum=maximum)
 
 
 @blueprint.post("/charts/subplot/render")

@@ -31,7 +31,7 @@
 | POST | [`/api/database/charts/radar/render`](#api-specialty-charts) | 渲染雷达图 PNG |
 | POST | [`/api/database/charts/sankey/data`](#api-specialty-charts) | 查询桑基图流量 |
 | POST | [`/api/database/charts/sankey/render`](#api-specialty-charts) | 渲染桑基图 PNG |
-| POST | [`/api/database/charts/{line,scatter,heatmap}/data`](#api-additional-charts) | 查询折线、分组散点或热力图数据 |
+| POST | [`/api/database/charts/{line,scatter,heatmap}/data`](#api-additional-charts) | 查询折线、散点或热力图数据 |
 | POST | [`/api/database/charts/{line,scatter,heatmap}/render`](#api-additional-charts) | 渲染对应图表 PNG |
 | POST | [`/api/database/charts/subplot/render`](#api-subplot-chart) | 读取并渲染多子图组合 |
 
@@ -469,15 +469,17 @@ PNG 响应带有 `X-Eye-Bar-Renderer: 4`。绘制显著性标注时，绘图区�
 
 <a name="api-additional-charts"></a>
 
-## 折线图、分组散点图与热力图
+## 折线图、散点图与热力图
 
 每种图使用 `POST /api/database/charts/{kind}/data` 和 `POST /api/database/charts/{kind}/render`。取数沿用 `connectionId`、`table`、`categoryColumn`、`valueColumn` 和可选的 `groupColumn`。渲染将取数结果和 `style` 一同提交。
 
 | `kind` | 生成规则 |
 | --- | --- |
 | `line` | 横轴升序，数值与日期按实际间距绘制。可用第二字段分系列，缺失值会断线。最多 96 个横轴位置和 8 个系列。 |
-| `scatter` | `categoryColumn`、`valueColumn` 为两列数值，`groupColumn` 为分组。每条原始记录是一个点，最多 500 个点和 8 组。 |
+| `scatter` | `categoryColumn` 可为数值、日期或类别，`valueColumn` 必须是数值，`groupColumn` 可选。每条原始记录是一个点，可用 `maxPoints` 设置预览点数（1 至 500），最多 8 组。 |
 | `heatmap` | 长表模式用 `categoryColumn` 为行、`groupColumn` 为列，可按合计、记录数、平均值、最大值或最小值着色。宽表模式用 `layout: "wide"` 将 `valueColumns` 按选择顺序绘为列。缺失格显示灰色，最多 24 行、16 列。 |
+
+散点图返回 `series` 和 `xType`。日期或类别横轴附带 `points`，供前端显示刻度文字。渲染样式支持 `markerShape`（`circle`、`square`、`triangle`、`diamond`、`cross`）、`markerSize`、`opacity`、`hollow`、`showGrid` 和 `showLegend`。数值横轴可用 `fit` 显示线性拟合及 R²、RMSE，用 `referenceLine` 显示 `y = x`。
 
 宽表取数示例。以 `year` 为行，读取 `Q1` 至 `Q4` 的原值。`rowMin`、`rowMax` 为可选的数值行范围，包含端点。行字段重复时可使用 `sum`、`average`、`min` 或 `max` 分别汇总每列。
 
@@ -501,7 +503,7 @@ PNG 响应带有 `X-Eye-Bar-Renderer: 4`。绘制显著性标注时，绘图区�
 `POST /api/database/charts/subplot/render` 接受 `panels` 与 `style`，返回 `image/png`。最多 6 个子图，`style.columns` 允许 1 至 3 列，另支持总标题、题注、图例与 DPI。`kind` 支持 `bar`、`line`、`bar_line`、`scatter` 与 `overlay`。
 
 - `bar_line` 用 `selection.secondaryValueColumn` 指定折线数值字段，柱与线采用同一横轴和聚合口径。设 `rightAxis: true` 可让折线使用右纵轴。
-- `scatter` 可省略 `groupColumn`。设 `fit: true` 可显示全体散点的一元线性拟合，R² 和 RMSE 根据拟合残差计算。
+- `scatter` 的取数协议和样式与独立散点图一致。单独子图通过 `primaryStyle` 设置散点样式，重合子图通过 `layers[].style` 设置。旧请求里的 `panel.fit` 仍可使用。
 - `overlay` 使用 `layers`，包含两个带 `kind`（`bar`、`line` 或 `scatter`）和 `selection` 的子图配置。两组数据分别查询，横轴按同类型的类别、日期或数值对齐。`rightAxis: true` 将第二张子图分配给右纵轴。
 - 重合子图中的 `bar` 和 `line` 可用 `selection.groupColumn` 分组，也可用 `selection.secondaryValueColumn` 为同一横轴选取第二个数值字段。多系列柱形按横轴值并排，两个数值字段共用聚合方式。
 - `panel.title`、`xLabel`、`yLabel`、`rightLabel` 分别设置子图标题及轴名。`panel.style` 支持 `backgroundColor`、`grid`（`none`、`x`、`y`、`both`）、`frame`（`none`、`axes`、`box`）、`legend`（`inherit`、`none`、`auto`、`top-left`、`top-right`、`bottom`）、`tickRotation`（`null`、`0`、`25`、`45`）及左右纵轴范围 `yMin`、`yMax`、`rightYMin`、`rightYMax`。范围可传 `null` 以保留自动缩放。

@@ -1,8 +1,7 @@
-from math import ceil
-
 from app.service.cartesian_charts import load_line_data, load_scatter_data
+from app.service.scatter_style import draw_scatter_guides, draw_scatter_series, scatter_style
 from app.util.chart import (
-    ChartError, chart_object, chart_text, draw_bars, draw_line, draw_scatter, style_choice, style_color, style_flag,
+    ChartError, chart_object, chart_text, draw_bars, draw_line, style_choice, style_color, style_flag,
     style_range,
 )
 
@@ -12,19 +11,48 @@ LINE_STYLES = {"solid": "-", "dashed": "--", "dotted": ":"}
 LINE_MARKERS = {"circle": "o", "triangle": "^", "square": "s", "diamond": "D"}
 
 
-def layer_style(raw, index=0):
+def layer_style(raw, index=0, kind=None):
     """读取独立图层的配色和图形参数。"""
     style = chart_object(raw)
-    return {
+    opacity = 0.82 if index == 0 else 0.75
+    appearance = {
         "color": style_color(style, "color", LAYER_COLORS[index]),
-        "opacity": style_range(style, "opacity", 0.82 if index == 0 else 0.75, 0.15, 1),
+        "label": chart_text(style, "legendLabel", maximum=40),
+    }
+    if kind == "scatter":
+        return {**appearance, **scatter_style(style, size=28, opacity=opacity)}
+    return {
+        **appearance,
+        "opacity": style_range(style, "opacity", opacity, 0.15, 1),
         "markers": style_flag(style, "markers", True),
         "lineWidth": style_range(style, "lineWidth", 1.8, 0.5, 4),
         "lineStyle": LINE_STYLES[style_choice(style, "lineStyle", LINE_STYLES, "solid")],
         "lineMarker": LINE_MARKERS[style_choice(style, "lineMarker", LINE_MARKERS, "circle")],
         "lineMarkerSize": style_range(style, "lineMarkerSize", 4, 2, 10),
-        "markerSize": style_range(style, "markerSize", 28, 10, 100),
-        "label": chart_text(style, "legendLabel", maximum=40),
+    }
+
+
+def load_subplot_layer(raw, index=0):
+    """加载一种图的数据和样式，供单独子图和重合子图复用。"""
+    entry = chart_object(raw)
+    kind = style_choice(entry, "kind", LAYER_KINDS, "bar")
+    selection = chart_object(entry.get("selection"))
+    if kind == "scatter":
+        data = load_scatter_data(selection)
+    else:
+        data = load_line_data(selection)
+        if not data["series"]:
+            data["series"] = [{"label": data["seriesName"], "values": [point["value"] for point in data["points"]]}]
+            if "secondaryName" in data:
+                data["series"].append({
+                    "label": data["secondaryName"], "values": [point["secondary"] for point in data["points"]],
+                })
+    second_style = entry.get("secondSeriesStyle")
+    return {
+        "kind": kind, "data": data, "style": layer_style(entry.get("style", {}), index, kind),
+        "secondSeriesStyle": layer_style(second_style, index, kind) if second_style is not None else None,
+        "xLabel": chart_text(selection, "categoryColumn", required=True),
+        "yLabel": data.get("yLabel") or data["seriesName"],
     }
 
 
@@ -33,34 +61,11 @@ def load_overlay(panel):
     entries = panel.get("layers")
     if not isinstance(entries, list) or len(entries) != 2:
         raise ChartError("叠加子图需要两个图层。")
-    layers = []
-    for index, raw in enumerate(entries):
-        entry = chart_object(raw)
-        kind = style_choice(entry, "kind", LAYER_KINDS, "bar")
-        selection = chart_object(entry.get("selection"))
-        if kind == "scatter":
-            data = load_scatter_data(selection, require_group=False)
-        else:
-            data = load_line_data(selection)
-            if not data["series"]:
-                data["series"] = [{"label": data["seriesName"], "values": [point["value"] for point in data["points"]]}]
-                if "secondaryName" in data:
-                    data["series"].append({
-                        "label": data["secondaryName"], "values": [point["secondary"] for point in data["points"]],
-                    })
-        axis_type = ("number" if data["series"] else None) if kind == "scatter" else data["xType"]
-        second_style = entry.get("secondSeriesStyle")
-        layers.append({
-            "kind": kind, "data": data, "style": layer_style(entry.get("style", {}), index),
-            "secondSeriesStyle": layer_style(second_style, index) if second_style is not None else None,
-            "axisType": axis_type, "xLabel": chart_text(selection, "categoryColumn", required=True),
-            "yLabel": data.get("yLabel") or data["seriesName"],
-        })
-    types = {layer["axisType"] for layer in layers if layer["axisType"]}
+    layers = [load_subplot_layer(entry, index) for index, entry in enumerate(entries)]
+    types = {layer["data"]["xType"] for layer in layers} - {None}
     if len(types) > 1:
         raise ChartError("两个图层的横轴类型须一致，请同时选择类别、日期或数值字段。")
     return layers
-
 
 def _category_key(point):
     """使用数据点的稳定键对齐类别。"""
@@ -69,7 +74,7 @@ def _category_key(point):
 
 def overlay_ticks(layers):
     """合并两个图层的类别或日期刻度，并建立共享坐标。"""
-    axis_type = next((layer["axisType"] for layer in layers if layer["axisType"]), "number")
+    axis_type = next((layer["data"]["xType"] for layer in layers if layer["data"]["xType"]), "number")
     labels = {}
     for layer in layers:
         for point in layer["data"].get("points", []):
@@ -109,18 +114,20 @@ def _overlay_series_style(layer, index, name):
     return (style if index == 0 else {**style, "color": f"C{index}"}), label
 
 
-def draw_overlay_layer(axes, layer, positions, index, bar_width):
+def draw_subplot_layer(axes, layer, positions, index, bar_width, font, *, overlay=False):
     """将一个子图的全部系列画在共享坐标轴上。"""
     kind, series = layer["kind"], layer["data"]["series"]
+    point_positions = dict(zip((point["x"] for point in layer["data"]["points"]), positions)) if kind == "scatter" else {}
     plotted = False
     for series_index, item in enumerate(series):
         style, label = _overlay_series_style(layer, series_index, item["label"])
-        options = {"label": label, "color": style["color"], "alpha": style["opacity"]}
         if kind == "scatter":
-            xs, ys = zip(*item["samples"])
-            draw_scatter(axes, xs, ys, size=style["markerSize"], zorder=3 + index, **options)
+            samples = [(point_positions.get(x, x), y) for x, y in item["samples"]]
+            draw_scatter_series(axes, samples, style, style["color"], label, zorder=3 + index)
             plotted = True
-        elif kind == "bar":
+            continue
+        options = {"label": label, "color": style["color"], "alpha": style["opacity"]}
+        if kind == "bar":
             width = bar_width / len(series)
             offset = (series_index - (len(series) - 1) / 2) * width
             present = [(x + offset, value) for x, value in zip(positions, item["values"]) if value is not None]
@@ -136,18 +143,6 @@ def draw_overlay_layer(axes, layer, positions, index, bar_width):
                       marker=style["lineMarker"], markersize=style["lineMarkerSize"], linewidth=style["lineWidth"],
                       linestyle=style["lineStyle"], zorder=3 + index, **options)
             plotted = plotted or any(value is not None for value in values)
+    if kind == "scatter":
+        draw_scatter_guides(axes, series, layer["style"], layer["data"]["xType"], font, layer=index if overlay else None)
     return plotted
-
-
-def set_shared_ticks(axes, ticks, font, rotation):
-    """在共享轴上按可见密度显示类别或日期标签。"""
-    if not ticks:
-        return
-    positions = list(range(0, len(ticks), max(1, ceil(len(ticks) / 6))))
-    if positions[-1] != len(ticks) - 1:
-        positions.append(len(ticks) - 1)
-    degrees = (28 if len(positions) > 4 else 0) if rotation is None else rotation
-    axes.set_xticks(
-        [ticks[index][0] for index in positions], [ticks[index][1][:16] for index in positions],
-        rotation=degrees, ha="right" if degrees else "center", fontsize=8, fontproperties=font, parse_math=False,
-    )

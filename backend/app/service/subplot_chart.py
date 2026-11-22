@@ -1,12 +1,12 @@
 from math import ceil
 
-from app.service.cartesian_charts import load_line_data, load_scatter_data
+from app.service.cartesian_charts import load_line_data
 from app.service.subplot_layers import (
-    draw_overlay_layer, layer_positions, layer_style, load_overlay, overlay_ticks, series_label, set_shared_ticks,
+    draw_subplot_layer, layer_positions, layer_style, load_overlay, load_subplot_layer, overlay_ticks,
 )
 from app.util.chart import (
-    DPI_OPTIONS, ChartError, chart_font, chart_number, chart_object, chart_text, draw_bars, draw_line, draw_scatter,
-    figure_png, render_lock, style_choice, style_color, style_flag,
+    DPI_OPTIONS, ChartError, chart_font, chart_number, chart_object, chart_text, draw_bars, draw_line,
+    figure_png, render_lock, set_chart_ticks, style_choice, style_color, style_flag,
 )
 
 MAX_PANELS = 6
@@ -64,45 +64,43 @@ def _load_panel(panel):
         return details
 
     selection = chart_object(panel.get("selection"))
+    primary = chart_object(panel.get("primaryStyle", {}))
+    if kind != "bar_line":
+        if kind == "scatter" and style_flag(panel, "fit", False):
+            primary = {**primary, "fit": True}
+        layer = load_subplot_layer({"kind": kind, "selection": selection, "style": primary})
+        details.update(data=layer)
+        details["xLabel"] = details["xLabel"] or layer["xLabel"]
+        details["yLabel"] = details["yLabel"] or layer["yLabel"]
+        return details
+
+    secondary = chart_text(selection, "secondaryValueColumn", required=True)
+    if secondary == selection.get("valueColumn"):
+        raise ChartError("请选择不同的柱形与折线数值字段。")
+    data = load_line_data(selection)
     details["xLabel"] = details["xLabel"] or chart_text(selection, "categoryColumn", required=True)
-    if kind == "scatter":
-        data = load_scatter_data(selection, require_group=False)
-    else:
-        if kind == "bar_line":
-            secondary = chart_text(selection, "secondaryValueColumn", required=True)
-            if secondary == selection.get("valueColumn"):
-                raise ChartError("请选择不同的柱形与折线数值字段。")
-        data = load_line_data(selection)
-    details["yLabel"] = details["yLabel"] or data.get("yLabel") or data["seriesName"]
-    details.update(
-        data=data, fit=kind == "scatter" and style_flag(panel, "fit", False),
-        primary=layer_style(panel.get("primaryStyle", {})),
-        secondary=layer_style(panel.get("secondaryStyle", {}), 1),
-    )
+    details["yLabel"] = details["yLabel"] or data["seriesName"]
+    details.update(data=data, primary=layer_style(primary), secondary=layer_style(panel.get("secondaryStyle", {}), 1))
     return details
 
-
-def _fit_scatter(axes, samples):
-    """为散点添加一元线性拟合及基于拟合残差的指标。"""
-    import numpy as np
-
-    values = np.asarray(samples, dtype=float)
-    x, y = values.T
-    width = np.ptp(x)
-    if len(x) < 2 or width == 0:
-        return
-    scaled_x = (x - x.mean()) / width
-    slope, intercept = np.polyfit(scaled_x, y, 1)
-    fitted = slope * scaled_x + intercept
-    residual = np.sum((y - fitted) ** 2)
-    variance = np.sum((y - y.mean()) ** 2)
-    xs = np.array([x.min(), x.max()])
-    draw_line(axes, xs, slope * (xs - x.mean()) / width + intercept, markers=False,
-              color="#243858", linestyle="--", label="线性拟合")
-    r2 = f"{(1 - residual / variance):.3f}" if variance > 0 else "—"
-    rmse = np.sqrt(residual / len(x))
-    axes.text(0.97, 0.04, f"R² = {r2}\nRMSE = {rmse:.3g}", transform=axes.transAxes,
-              ha="right", va="bottom", fontsize=8, color="#243858")
+def _draw_overlay(axes, panel, font):
+    """对齐两张图的横轴，复用各图的绘制函数。"""
+    layers = panel["data"]
+    coordinates, ticks = overlay_ticks(layers)
+    positions = [layer_positions(layer, coordinates) for layer in layers]
+    bar_x = sorted({x for layer, xs in zip(layers, positions) if layer["kind"] == "bar" for x in xs})
+    step = min((next_x - x for x, next_x in zip(bar_x, bar_x[1:])), default=1)
+    both_bars = all(layer["kind"] == "bar" for layer in layers)
+    right = axes.twinx() if panel["rightAxis"] else None
+    plotted = False
+    for index, (layer, xs) in enumerate(zip(layers, positions)):
+        target = right if index == 1 and right is not None else axes
+        width = step * (0.4 if index == 1 and both_bars else 0.65)
+        plotted = draw_subplot_layer(target, layer, xs, index, width, font, overlay=True) or plotted
+    set_chart_ticks(axes, ticks, font, panel["style"]["tickRotation"])
+    if right is not None:
+        right.set_ylabel((panel["rightLabel"] or layers[1]["yLabel"])[:40], fontproperties=font, parse_math=False)
+    return right, plotted
 
 
 def _draw_panel(axes, panel, font):
@@ -110,66 +108,32 @@ def _draw_panel(axes, panel, font):
     kind, data, right_axis = (panel[key] for key in ("kind", "data", "rightAxis"))
     tick_rotation = panel["style"]["tickRotation"]
     if kind == "overlay":
-        coordinates, ticks = overlay_ticks(data)
-        positions = [layer_positions(layer, coordinates) for layer in data]
-        bar_x = sorted({x for layer, xs in zip(data, positions) if layer["kind"] == "bar" for x in xs})
-        step = min((next_x - x for x, next_x in zip(bar_x, bar_x[1:])), default=1)
-        second_width = step * (0.4 if all(layer["kind"] == "bar" for layer in data) else 0.65)
-        right = axes.twinx() if right_axis else None
-        first = draw_overlay_layer(axes, data[0], positions[0], 0, step * 0.65)
-        second = draw_overlay_layer(
-            right if right is not None else axes, data[1], positions[1], 1, second_width,
-        )
-        set_shared_ticks(axes, ticks, font, tick_rotation)
-        if right is not None:
-            right.set_ylabel((panel["rightLabel"] or data[1]["yLabel"])[:40], fontproperties=font, parse_math=False)
-        return right, first or second
+        return _draw_overlay(axes, panel, font)
 
-    primary = panel["primary"]
-    secondary_style = panel["secondary"]
-
-    if kind == "scatter":
-        samples = []
-        for index, series in enumerate(data["series"]):
-            points = series["samples"]
-            xs, ys = zip(*points)
-            label = series_label(primary, series["label"], len(data["series"]) > 1)
-            draw_scatter(axes, xs, ys, size=primary["markerSize"], alpha=primary["opacity"],
-                         label=label, color=primary["color"] if index == 0 else f"C{index}")
-            samples.extend(points)
-        if panel["fit"] and len(samples) >= 2:
-            _fit_scatter(axes, samples)
-        return None, bool(samples)
+    if kind != "bar_line":
+        points = data["data"]["points"]
+        positions = list(range(len(points))) if kind == "bar" else layer_positions(data, None)
+        visible = draw_subplot_layer(axes, data, positions, 0, 0.65, font)
+        set_chart_ticks(axes, list(zip(positions, (point["label"] for point in points))), font, tick_rotation)
+        return None, visible
 
     points = data["points"]
     if not points:
         return None, False
-    positions = [point["x"] for point in points] if kind == "line" else list(range(len(points)))
-    if kind in ("bar", "bar_line"):
-        draw_bars(axes, positions, [point["value"] or 0 for point in points],
-                  color=primary["color"], alpha=primary["opacity"], label=primary["label"] or data["seriesName"][:24])
-    if kind == "line":
-        series = data.get("series") or [{"label": data["seriesName"], "values": [p["value"] for p in points]}]
-        for index, item in enumerate(series):
-            draw_line(axes, positions, [value if value is not None else float("nan") for value in item["values"]],
-                      color=primary["color"] if index == 0 else f"C{index}",
-                      label=series_label(primary, item["label"], len(series) > 1), markers=primary["markers"],
-                      linewidth=primary["lineWidth"], linestyle=primary["lineStyle"], alpha=primary["opacity"],
-                      marker=primary["lineMarker"], markersize=primary["lineMarkerSize"])
-
-    secondary = None
-    if kind == "bar_line":
-        secondary = axes.twinx() if right_axis else axes
-        draw_line(secondary, positions, [point["secondary"] if point["secondary"] is not None else float("nan") for point in points],
-                  color=secondary_style["color"], label=secondary_style["label"] or data["secondaryName"][:24],
-                  markers=secondary_style["markers"], linewidth=secondary_style["lineWidth"],
-                  linestyle=secondary_style["lineStyle"], alpha=secondary_style["opacity"],
-                  marker=secondary_style["lineMarker"], markersize=secondary_style["lineMarkerSize"])
-        if right_axis:
-            secondary.set_ylabel((panel["rightLabel"] or data["secondaryName"])[:40], fontproperties=font, parse_math=False)
-    set_shared_ticks(axes, list(zip(positions, (point["label"] for point in points))), font, tick_rotation)
+    positions = list(range(len(points)))
+    primary, secondary_style = panel["primary"], panel["secondary"]
+    draw_bars(axes, positions, [point["value"] or 0 for point in points],
+              color=primary["color"], alpha=primary["opacity"], label=primary["label"] or data["seriesName"][:24])
+    secondary = axes.twinx() if right_axis else axes
+    draw_line(secondary, positions, [point["secondary"] if point["secondary"] is not None else float("nan") for point in points],
+              color=secondary_style["color"], label=secondary_style["label"] or data["secondaryName"][:24],
+              markers=secondary_style["markers"], linewidth=secondary_style["lineWidth"],
+              linestyle=secondary_style["lineStyle"], alpha=secondary_style["opacity"],
+              marker=secondary_style["lineMarker"], markersize=secondary_style["lineMarkerSize"])
+    if right_axis:
+        secondary.set_ylabel((panel["rightLabel"] or data["secondaryName"])[:40], fontproperties=font, parse_math=False)
+    set_chart_ticks(axes, list(zip(positions, (point["label"] for point in points))), font, tick_rotation)
     return secondary if right_axis else None, True
-
 
 def _apply_axes_style(axes, right, style):
     """应用绘图区背景、网格、边框和纵轴上下限。"""

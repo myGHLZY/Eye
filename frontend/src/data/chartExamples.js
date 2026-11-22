@@ -65,7 +65,7 @@ const catalog = {
     ["scatter_demo2", "气泡图", "横轴数值、纵轴数值、气泡大小、可选颜色字段"],
     ["multivariate_marker_plot", "多变量标记图", "横纵坐标、标记大小、角度和颜色字段"],
     ["scatter_star_poly", "星形标记散点图", "横纵坐标、标记形状及大小"],
-    ["scatter_with_legend", "分组散点图", "横轴数值、纵轴数值、分组"],
+    ["scatter_with_legend", "散点图", "横轴字段、纵轴数值和可选分组"],
     ["scatter_masked", "带掩码的散点图", "横轴数值、纵轴数值、掩码条件"],
     ["scatter_hist", "带边际直方图的散点图", "横轴数值、纵轴数值、可选分箱规则"],
     ["stairs_demo", "分箱台阶图", "分箱边界、每箱数值"],

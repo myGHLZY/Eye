@@ -32,37 +32,14 @@
                         <option v-for="(label, kind) in layerKinds" :key="kind" :value="kind">{{ label }}</option>
                       </select>
                     </label>
-                    <label v-if="layer.kind !== 'scatter'">系列来源
-                      <select v-model="layer.seriesMode">
-                        <option value="single">一个系列</option>
-                        <option value="group">按字段分组</option>
-                        <option value="fields">两个数值字段</option>
-                      </select>
-                    </label>
-                    <chart-data-picker :key="layer.kind" v-model="layer.selection"
-                      :aggregations="layer.seriesMode === 'fields' ? numericAggregations : aggregations"
-                      :raw-points="layer.kind === 'scatter'"
-                      :group-mode="layer.kind === 'scatter' ? 'optional' : layer.seriesMode === 'group' ? 'required' : 'none'"
-                      :category-label="layer.kind === 'scatter' ? '横轴数值' : '横轴字段'"
-                      :value-label="layer.kind === 'scatter' ? '纵轴数值' : '数值字段'"
-                      :secondary-label="layer.kind !== 'scatter' && layer.seriesMode === 'fields' ? '第二数值字段' : ''" />
+                    <subplot-data-fields :entry="layer" overlay />
                   </div>
                 </details>
               </template>
-              <chart-data-picker v-else :key="panel.kind" v-model="panel.selection"
-                :aggregations="panel.kind === 'bar_line' ? numericAggregations : aggregations"
-                :raw-points="panel.kind === 'scatter'"
-                :group-mode="['line', 'scatter'].includes(panel.kind) ? 'optional' : 'none'"
-                :category-label="panel.kind === 'scatter' ? '横轴数值' : '横轴字段'"
-                :group-label="panel.kind === 'scatter' ? '分组字段' : '系列字段'"
-                :value-label="panel.kind === 'scatter' ? '纵轴数值' : panel.kind === 'bar_line' ? '柱形数值字段' : '数值字段'"
-                :secondary-label="panel.kind === 'bar_line' ? '折线数值字段' : ''" />
+              <subplot-data-fields v-else :key="panel.kind" :entry="panel" />
               <label v-if="canUseRightAxis(panel)" class="check">
                 <input v-model="panel.rightAxis" type="checkbox">
                 {{ panel.kind === 'overlay' ? '子图 B' : '折线' }}使用右纵轴
-              </label>
-              <label v-if="panel.kind === 'scatter'" class="check">
-                <input v-model="panel.fit" type="checkbox"> 添加线性拟合及 R²、RMSE
               </label>
               <div class="toolbar">
                 <button type="button" :disabled="index === 0" @click="move(index, -1)">上移</button>
@@ -144,14 +121,14 @@
               </div>
               <template v-if="panel.kind === 'overlay'">
                 <div v-for="(layer, layerIndex) in panel.layers" :key="layerIndex" class="series-styles">
-                  <subplot-layer-style-fields :style-options="layer.style" :kind="layer.kind"
+                  <subplot-layer-style-fields :style-options="layer.style" :kind="layer.kind" guides
                     :title="'子图 ' + layerNames[layerIndex] + (isMultiSeries(layer) ? ' · 系列 1' : ' · ' + layerKinds[layer.kind])" />
                   <subplot-layer-style-fields v-if="isMultiSeries(layer)" :style-options="layer.secondSeriesStyle"
                     :kind="layer.kind" :title="'子图 ' + layerNames[layerIndex] + ' · 系列 2'" />
                 </div>
               </template>
               <template v-else>
-                <subplot-layer-style-fields :style-options="panel.primaryStyle"
+                <subplot-layer-style-fields :style-options="panel.primaryStyle" guides
                   :kind="panel.kind === 'bar_line' ? 'bar' : panel.kind"
                   :title="panel.kind === 'bar_line' ? '柱状图样式' : '图形样式'" />
                 <subplot-layer-style-fields v-if="panel.kind === 'bar_line'" :style-options="panel.secondaryStyle"
@@ -175,63 +152,24 @@
 
 <script>
 import ChartColorPicker from '../components/chart/ChartColorPicker.vue'
-import ChartDataPicker from '../components/chart/ChartDataPicker.vue'
+import { renderChartImage } from '../api/chart.js'
+import SubplotDataFields from '../components/chart/SubplotDataFields.vue'
 import ChartEditorControls from '../components/chart/ChartEditorControls.vue'
 import ChartPreview from '../components/chart/ChartPreview.vue'
 import SubplotLayerStyleFields from '../components/chart/SubplotLayerStyleFields.vue'
+import { createPanel, isMultiSeries, kinds, layerKinds, subplotPayload } from '../data/subplotConfig.js'
 
 const maxPanels = 6
-const layerKinds = { bar: '柱状图', line: '折线图', scatter: '散点图' }
-const kinds = { ...layerKinds, bar_line: '柱状图＋折线图', overlay: '重合子图' }
 const layerNames = ['A', 'B']
-const numericAggregations = ['sum', 'average', 'max', 'min']
-
-function createLayerStyle(index, overrides = {}) {
-  return {
-    color: index === 0 ? '#4281bb' : '#bb5635',
-    opacity: index === 0 ? 0.82 : 0.75,
-    legendLabel: '', lineStyle: 'solid', lineWidth: 1.8, markers: true, markerSize: 28,
-    lineMarker: 'circle', lineMarkerSize: 4, ...overrides,
-  }
-}
-
-function createPanel(id, kind = 'bar') {
-  // 每个子图保存独立的图层、坐标轴和样式。
-  return {
-    id, kind, selection: null, title: '', xLabel: '', yLabel: '', rightLabel: '', fit: false, rightAxis: false,
-    layers: [
-      {
-        kind: 'bar', selection: null, seriesMode: 'single',
-        style: createLayerStyle(0, { color: '#ff8000', opacity: 1 }),
-        secondSeriesStyle: createLayerStyle(0, { color: '#8000c5', opacity: 1, lineStyle: 'dashed' }),
-      },
-      {
-        kind: 'line', selection: null, seriesMode: 'single',
-        style: createLayerStyle(1, { color: '#dd2222', opacity: 1, lineMarker: 'triangle', lineMarkerSize: 7 }),
-        secondSeriesStyle: createLayerStyle(1, {
-          color: '#2548d8', opacity: 1, lineStyle: 'dashed', lineMarker: 'square', lineMarkerSize: 5,
-        }),
-      },
-    ],
-    primaryStyle: createLayerStyle(0),
-    secondaryStyle: createLayerStyle(1),
-    style: {
-      backgroundColor: '#ffffff', grid: 'both', frame: 'box', legend: 'inherit', legendFrame: kind === 'overlay',
-      tickRotation: null,
-      yMin: null, yMax: null, rightYMin: null, rightYMax: null,
-    },
-  }
-}
 
 export default {
   name: 'SubplotChartEditorView',
-  components: { ChartColorPicker, ChartDataPicker, ChartEditorControls, ChartPreview, SubplotLayerStyleFields },
+  components: { ChartColorPicker, ChartEditorControls, ChartPreview, SubplotDataFields, SubplotLayerStyleFields },
   data() {
     const initialKind = this.$route.params.chartId === 'subplot_overlay' ? 'overlay' : 'bar'
     return {
       panels: [createPanel(1, initialKind)], initialKind, nextId: 2, openPanel: 1,
-      kinds, layerKinds, layerNames, maxPanels, numericAggregations,
-      aggregations: ['sum', 'count', 'average', 'max', 'min'],
+      kinds, layerKinds, layerNames, maxPanels,
       style: { title: '', caption: '', columns: 2, dpi: 130, showLegend: true },
       error: '', rendering: false, imageUrl: '', generated: '',
     }
@@ -242,8 +180,11 @@ export default {
         ? panel.layers.every(layer => layer.selection)
         : panel.selection)
     },
+    requestPayload() {
+      return subplotPayload(this.panels, this.style)
+    },
     signature() {
-      return JSON.stringify({ panels: this.panels, style: this.style })
+      return JSON.stringify(this.requestPayload)
     },
   },
   beforeDestroy() {
@@ -269,9 +210,7 @@ export default {
     canUseRightAxis(panel) {
       return panel.kind === 'overlay' || panel.kind === 'bar_line'
     },
-    isMultiSeries(layer) {
-      return layer.kind === 'scatter' ? Boolean(layer.selection?.groupColumn) : layer.seriesMode !== 'single'
-    },
+    isMultiSeries,
     setLimit(panel, key, input) {
       panel.style[key] = Number.isFinite(input.valueAsNumber) ? input.valueAsNumber : null
     },
@@ -288,16 +227,7 @@ export default {
       this.rendering = true
       this.error = ''
       try {
-        const response = await fetch('/api/database/charts/subplot/render', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: signature, signal: request.signal,
-        })
-        if (!response.ok) {
-          const result = await response.json().catch(() => null)
-          if (response.status === 404 && !result) throw new Error('请重新运行 Flask 后端以加载组合图接口。')
-          throw new Error(result?.error?.message || '生成组合图失败。')
-        }
-        if (!response.headers.get('Content-Type')?.startsWith('image/png')) throw new Error('渲染接口没有返回 PNG 图片。')
-        const image = await response.blob()
+        const image = await renderChartImage('subplot', this.requestPayload, request.signal)
         if (this._request !== request) return
         if (this.imageUrl) URL.revokeObjectURL(this.imageUrl)
         this.imageUrl = URL.createObjectURL(image)

@@ -30,9 +30,13 @@
             <label class="check"><input v-model="showFlowValues" type="checkbox"> 在流带上显示流量</label>
           </template>
           <label v-if="kind === 'line'" class="check"><input v-model="showMarkers" type="checkbox"> 显示数据点</label>
-          <label v-if="kind === 'scatter'" class="field">散点大小
-            <input v-model.number="markerSize" type="range" min="10" max="100" step="5">
-          </label>
+          <template v-if="kind === 'scatter'">
+            <label class="field">横轴名称<input v-model.trim="scatterXLabel" type="text" maxlength="60" :placeholder="dataset?.xLabel"></label>
+            <label class="field">纵轴名称<input v-model.trim="scatterYLabel" type="text" maxlength="60" :placeholder="dataset?.yLabel"></label>
+            <label class="check"><input v-model="scatterShowGrid" type="checkbox"> 显示网格</label>
+            <label class="check"><input v-model="scatterShowLegend" type="checkbox"> 显示图例</label>
+            <scatter-style-fields :settings="scatter" guides />
+          </template>
           <template v-if="kind === 'heatmap'">
             <label class="field">热力配色
               <select v-model="colorMap">
@@ -72,23 +76,14 @@
 </template>
 
 <script>
+import { fetchChartData, renderChartImage } from '../api/chart.js'
 import ChartEditorControls from '../components/chart/ChartEditorControls.vue'
 import ChartDataPicker from '../components/chart/ChartDataPicker.vue'
 import ChartPalettePicker from '../components/chart/ChartPalettePicker.vue'
 import ChartPreview from '../components/chart/ChartPreview.vue'
+import ScatterStyleFields from '../components/chart/ScatterStyleFields.vue'
 import { chartPalettes } from '../data/chartPalettes.js'
-
-async function postChart(kind, action, payload, signal) {
-  // Both specialty charts use the same Flask request format.
-  const response = await fetch(`/api/database/charts/${kind}/${action}`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload), cache: 'no-store', signal,
-  })
-  if (response.ok) return response
-  const result = await response.json().catch(() => null)
-  if (response.status === 404 && !result) throw new Error('请重新运行 Flask 后端以加载新图表接口。')
-  throw new Error(result?.error?.message || '图表请求失败，请检查后端服务。')
-}
+import { createScatterStyle } from '../data/scatterStyle.js'
 
 const format = new Intl.NumberFormat('zh-CN', { maximumSignificantDigits: 8 })
 const baseAggregations = ['sum', 'average', 'count', 'max', 'min']
@@ -97,20 +92,22 @@ const chartEditors = {
   radar_chart: { kind: 'radar', title: '雷达图', categoryLabel: '指标字段', groupLabel: '系列字段', groupMode: 'optional', dataHeading: '指标数据' },
   sankey_basics: { kind: 'sankey', title: '桑基图', categoryLabel: '来源字段', groupLabel: '目标字段', groupMode: 'required', dataHeading: '流量数据' },
   simple_plot: { kind: 'line', title: '折线图', categoryLabel: '横轴字段', groupLabel: '系列字段', groupMode: 'optional', dataHeading: '折线数据' },
-  scatter_with_legend: { kind: 'scatter', title: '分组散点图', categoryLabel: '横轴数值', groupLabel: '分组字段', groupMode: 'required', dataHeading: '散点数据' },
+  scatter_with_legend: { kind: 'scatter', title: '散点图', categoryLabel: '横轴字段', groupLabel: '分组字段（可选）', groupMode: 'optional', dataHeading: '散点数据' },
   specialty_heatmap: { kind: 'heatmap', title: '热力图', categoryLabel: '行字段', groupLabel: '列字段', groupMode: 'required', dataHeading: '矩阵数据' },
 }
 
 export default {
   name: 'SpecialChartEditorView',
-  components: { ChartDataPicker, ChartEditorControls, ChartPalettePicker, ChartPreview },
+  components: { ChartDataPicker, ChartEditorControls, ChartPalettePicker, ChartPreview, ScatterStyleFields },
   data() {
     return {
       selection: null, dataset: null, palettes: chartPalettes, paletteId: 'classic',
       title: '', fill: true, flowOpacity: 0.4, loading: false, rendering: false, imageUrl: '',
       showFlowValues: false,
       heatmapLayout: 'long',
-      showMarkers: true, markerSize: 40, colorMap: 'Blues', showValues: true,
+      showMarkers: true, colorMap: 'Blues', showValues: true,
+      scatter: createScatterStyle(), scatterXLabel: '', scatterYLabel: '',
+      scatterShowGrid: true, scatterShowLegend: true,
       dataError: '', previewError: '',
     }
   },
@@ -131,18 +128,24 @@ export default {
       return groupColumn ? `${categoryColumn} · ${groupColumn} · ${this.dataset.seriesName}` : `${categoryColumn} · ${this.dataset.seriesName}`
     },
     series() { return this.dataset?.series || [] },
+    groupedScatter() { return Boolean(this.selection?.groupColumn) },
     headings() {
       if (this.kind === 'sankey') return ['来源', '目标', '流量']
-      if (this.kind === 'scatter') return ['分组', this.dataset?.xLabel, this.dataset?.yLabel]
+      if (this.kind === 'scatter') return [
+        ...(this.groupedScatter ? ['分组'] : []), this.dataset?.xLabel, this.dataset?.yLabel,
+      ]
       if (this.kind === 'heatmap') return ['行 / 列', ...(this.dataset?.columns || [])]
       return [this.isRadar ? '指标' : '横轴', ...(this.series.length ? this.series.map(item => item.label) : ['数值'])]
     },
     rows() {
       if (!this.dataset) return []
       if (this.kind === 'sankey') return this.dataset.flows.map(flow => [flow.source, flow.target, format.format(flow.value)])
-      if (this.kind === 'scatter') return this.series.flatMap(group =>
-        group.samples.map(([x, y]) => [group.label, format.format(x), format.format(y)]),
-      )
+      if (this.kind === 'scatter') {
+        const labels = new Map((this.dataset.points || []).map(point => [point.x, point.label]))
+        return this.series.flatMap(group => group.samples.map(([x, y]) => [
+          ...(this.groupedScatter ? [group.label] : []), labels.get(x) ?? format.format(x), format.format(y),
+        ]))
+      }
       if (this.kind === 'heatmap') return this.dataset.rows.map((row, index) => [
         row, ...this.dataset.values[index].map(value => value == null ? '—' : format.format(value)),
       ])
@@ -162,11 +165,17 @@ export default {
           colors: palette.colors, title: this.title || this.automaticTitle.slice(0, 60),
           legendLabel: this.dataset.seriesName, fill: this.fill, flowOpacity: this.flowOpacity,
           ...(this.kind === 'sankey' ? { showFlowValues: this.showFlowValues } : {}),
-          showMarkers: this.showMarkers, markerSize: this.markerSize, colorMap: this.colorMap, showValues: this.showValues,
+          showMarkers: this.showMarkers, colorMap: this.colorMap, showValues: this.showValues,
           xLabel: (this.selection.layout === 'wide' ? '数值列'
             : this.kind === 'heatmap' ? this.selection.groupColumn : this.selection.categoryColumn).slice(0, 60),
           yLabel: (this.kind === 'heatmap' ? this.selection.categoryColumn
             : this.kind === 'scatter' ? this.selection.valueColumn : this.dataset.seriesName).slice(0, 60),
+          ...(this.kind === 'scatter' ? {
+            ...this.scatter,
+            showGrid: this.scatterShowGrid, showLegend: this.scatterShowLegend,
+            xLabel: this.scatterXLabel || this.selection.categoryColumn.slice(0, 60),
+            yLabel: this.scatterYLabel || this.selection.valueColumn.slice(0, 60),
+          } : {}),
         },
       }
     },
@@ -179,6 +188,7 @@ export default {
   watch: {
     selection() {
       this._dataRequest?.abort()
+      this._dataRequest = null
       this.dataset = null
       this.loading = false
       this.dataError = ''
@@ -212,9 +222,8 @@ export default {
       this.loading = true
       this.dataError = ''
       try {
-        const response = await postChart(this.kind, 'data', this.selection, request.signal)
-        const payload = await response.json()
-        if (this._dataRequest === request) this.dataset = payload.data
+        const dataset = await fetchChartData(this.kind, this.selection, request.signal)
+        if (this._dataRequest === request) this.dataset = dataset
       } catch (error) {
         if (this._dataRequest === request && error.name !== 'AbortError') this.dataError = error.message
       } finally {
@@ -226,9 +235,7 @@ export default {
       const request = new AbortController()
       this._renderRequest = request
       try {
-        const response = await postChart(this.kind, 'render', this.renderPayload, request.signal)
-        if (!response.headers.get('Content-Type')?.startsWith('image/png')) throw new Error('渲染接口没有返回 PNG 图片。')
-        const image = await response.blob()
+        const image = await renderChartImage(this.kind, this.renderPayload, request.signal)
         if (this._renderRequest === request) {
           this.clearImage()
           this.imageUrl = URL.createObjectURL(image)

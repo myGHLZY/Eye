@@ -1,6 +1,6 @@
 from functools import lru_cache
 from io import BytesIO
-from math import isfinite
+from math import ceil, isfinite
 from pathlib import Path
 from re import compile
 from threading import Lock
@@ -124,3 +124,18 @@ def draw_line(axes, x, y, *, markers=True, marker="o", markersize=4, linewidth=1
 def draw_scatter(axes, x, y, *, size=40, alpha=0.75, **style):
     """在已有坐标轴上绘制半透明散点。"""
     return axes.scatter(x, y, s=size, alpha=alpha, **style)
+
+
+def set_chart_ticks(axes, ticks, font, rotation=None, *, max_labels=6, label_length=16, fontsize=8):
+    """为分类或时间横轴抽取刻度，并保留最后一个值。"""
+    if not ticks:
+        return
+    step = max(1, ceil((len(ticks) - 1) / max(1, max_labels - 1)))
+    visible = list(ticks[::step])
+    if visible[-1] != ticks[-1]:
+        visible.append(ticks[-1])
+    degrees = (28 if len(visible) > 4 else 0) if rotation is None else rotation
+    positions, labels = zip(*visible)
+    axes.set_xticks(positions, [label[:label_length] for label in labels],
+                    rotation=degrees, ha="right" if degrees else "center",
+                    fontsize=fontsize, fontproperties=font, parse_math=False)

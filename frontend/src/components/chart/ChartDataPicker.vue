@@ -31,7 +31,7 @@
       <label v-if="groupMode !== 'none'">
         {{ groupLabel }}
         <select v-model="groupColumn" :disabled="!columns.length || Boolean(loading)">
-          <option value="">{{ groupMode === 'required' ? '请选择字段' : '不分系列' }}</option>
+          <option value="">{{ groupMode === 'required' ? '请选择字段' : rawPoints ? '不分组' : '不分系列' }}</option>
           <option v-for="column in groupColumns" :key="column.name" :value="column.name">
             {{ column.name }} · {{ column.type }}
           </option>
@@ -84,6 +84,11 @@
             :key="column.name" :value="column.name">{{ column.name }} · {{ column.type }}</option>
         </select>
       </label>
+      <label v-if="rawPoints">最多绘制点数
+        <select v-model.number="maxPoints">
+          <option :value="100">100</option><option :value="250">250</option><option :value="500">500</option>
+        </select>
+      </label>
       <p v-if="wideMetrics && categoryColumn && !valueColumns.length && !availableMetrics.length">此表没有可选的数值列。</p>
       <p v-else-if="!wideMetrics && !rawPoints && columns.length && aggregation !== 'count' && !numericColumns.length">
         此表可以按记录数统计。
@@ -124,7 +129,7 @@ export default {
     return {
       connections: [], tables: [], columns: [],
       connectionId: '', table: '', categoryColumn: '', groupColumn: '', valueColumn: '', secondaryValueColumn: '',
-      valueColumns: [], rowMin: '', rowMax: '',
+      valueColumns: [], rowMin: '', rowMax: '', maxPoints: 500,
       aggregation: this.aggregations[0], aggregationLabels,
       loading: 'connections', error: '',
     }
@@ -144,7 +149,6 @@ export default {
       return this.numericColumns.filter(column => column.name !== this.categoryColumn && !this.valueColumns.includes(column.name))
     },
     categoryColumns() {
-      if (this.rawPoints) return this.numericColumns
       return this.columns.filter(column => categoryType.test(column.type) || numericType.test(column.type))
     },
     groupColumns() {
@@ -170,7 +174,7 @@ export default {
       }
       return {
         connectionId, table, categoryColumn,
-        ...(this.rawPoints ? { valueColumn } : { aggregation, valueColumn: aggregation === 'count' ? '' : valueColumn }),
+        ...(this.rawPoints ? { valueColumn, maxPoints: this.maxPoints } : { aggregation, valueColumn: aggregation === 'count' ? '' : valueColumn }),
         ...(this.selectedGroup ? { groupColumn: this.selectedGroup } : {}),
         ...(this.secondaryLabel ? { secondaryValueColumn: this.secondaryValueColumn } : {}),
       }

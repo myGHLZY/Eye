@@ -1,14 +1,14 @@
 from datetime import date, datetime
 from decimal import Decimal
-from math import ceil
 
 from sqlalchemy import literal, or_, select
 
 from app.service.chart_support import AGGREGATIONS, category_point, grouping_columns, paired_totals
 from app.service.database_connection import database_engine_for_connection
+from app.service.scatter_style import draw_scatter_guides, draw_scatter_series, scatter_style
 from app.util.chart import (
-    ChartError, chart_font, chart_number, chart_object, chart_text, draw_line, draw_scatter, figure_png,
-    render_lock, style_flag, style_range,
+    ChartError, chart_font, chart_number, chart_object, chart_text, draw_line, figure_png,
+    render_lock, set_chart_ticks, style_choice, style_flag,
 )
 
 MAX_LINE_POINTS = 96
@@ -108,30 +108,41 @@ def load_line_data(payload) -> dict:
     return result
 
 
-def load_scatter_data(payload, *, require_group=True) -> dict:
-    """读取两列数值与分组字段，每条记录对应一个散点。"""
+def load_scatter_data(payload) -> dict:
+    """每条记录绘制一个点，横轴支持数值、日期或类别，分组可选。"""
     payload = chart_object(payload)
     connection_id = chart_text(payload, "connectionId", required=True)
     table_name = chart_text(payload, "table", required=True)
     x_name = chart_text(payload, "categoryColumn", required=True)
     y_name = chart_text(payload, "valueColumn", required=True)
-    group_name = chart_text(payload, "groupColumn", required=require_group)
+    group_name = chart_text(payload, "groupColumn")
+    raw_limit = payload.get("maxPoints", MAX_SCATTER_POINTS)
+    if type(raw_limit) is not int or not 1 <= raw_limit <= MAX_SCATTER_POINTS:
+        raise ChartError(f"散点图最多支持 {MAX_SCATTER_POINTS} 个点。")
     if group_name in (x_name, y_name):
         raise ChartError("请选择独立的分组字段。")
     with database_engine_for_connection(connection_id) as engine, engine.connect() as connection:
-        source, x, y = grouping_columns(connection, table_name, x_name, y_name, group_name, numeric_axis=True)
+        source, x, y = grouping_columns(connection, table_name, x_name, y_name, group_name)
         group = source.c[group_name] if group_name else literal("数据")
         query = select(x, y, group).where(x.is_not(None), y.is_not(None), group.is_not(None))
-        rows = connection.execute(query.order_by(x, y, group).limit(MAX_SCATTER_POINTS + 1)).all()
+        rows = connection.execute(query.order_by(x, y, group).limit(raw_limit + 1)).all()
+    x_type = _axis_type(rows[0][0]) if rows else None
+    positions = {}
     groups = {}
-    for x, y, group in rows[:MAX_SCATTER_POINTS]:
-        groups.setdefault(group, []).append([chart_number(x), chart_number(y)])
+    for x, y, group in rows[:raw_limit]:
+        if x_type == "number":
+            position = chart_number(x)
+        else:
+            if x not in positions:
+                positions[x] = {**category_point(x, 0), "x": _line_x(x, len(positions))}
+            position = positions[x]["x"]
+        groups.setdefault(group, []).append([position, chart_number(y)])
     if len(groups) > MAX_SERIES:
         raise ChartError(f"散点图最多支持 {MAX_SERIES} 个分组，请更换分组字段。")
     return {
         "series": [{"label": str(group)[:120] or "空字符串", "samples": points} for group, points in groups.items()],
         "xLabel": x_name, "yLabel": y_name, "seriesName": "原始记录",
-        "truncated": len(rows) > MAX_SCATTER_POINTS,
+        "points": list(positions.values()), "xType": x_type, "truncated": len(rows) > raw_limit,
     }
 
 
@@ -145,7 +156,8 @@ def _figure(style):
     for method, key in ((figure.suptitle, "title"), (axes.set_xlabel, "xLabel"), (axes.set_ylabel, "yLabel")):
         method(chart_text(style, key, maximum=60), fontproperties=font, parse_math=False)
     axes.set_axisbelow(True)
-    axes.grid(color="#e5edf6", linewidth=0.7)
+    if style_flag(style, "showGrid", True):
+        axes.grid(color="#e5edf6", linewidth=0.7)
     return figure, axes, font
 
 
@@ -206,12 +218,8 @@ def render_line_chart(payload):
         for index, (label, values) in enumerate(lines):
             draw_line(axes, positions, values, color=palette[index % len(palette)],
                       markers=show_markers or len(points) == 1, label=label[:24])
-        indices = list(range(0, len(points), max(1, ceil(len(points) / 10))))
-        if indices[-1] != len(points) - 1:
-            indices.append(len(points) - 1)
-        axes.set_xticks([positions[i] for i in indices], [labels[i][:20] for i in indices],
-                        rotation=25 if len(indices) > 5 else 0, ha="right" if len(indices) > 5 else "center",
-                        fontproperties=font, parse_math=False, fontsize=9)
+        set_chart_ticks(axes, list(zip(positions, labels)), font, 25 if len(points) > 5 else 0,
+                        max_labels=10, label_length=20, fontsize=9)
         _legend(axes, style, font)
         return figure_png(figure)
 
@@ -220,6 +228,8 @@ def render_scatter_chart(payload):
     """按系列颜色绘制原始散点。"""
     payload = chart_object(payload)
     style = chart_object(payload.get("style", {}))
+    appearance = scatter_style(style)
+    x_type = style_choice(payload, "xType", ("number", "category", "date"), "number")
     series = payload.get("series")
     if not isinstance(series, list) or not 1 <= len(series) <= MAX_SERIES:
         raise ChartError()
@@ -237,14 +247,22 @@ def render_scatter_chart(payload):
                 raise ChartError()
             coordinates.append((_number(pair[0]), _number(pair[1])))
         count += len(samples)
-        groups.append((chart_text(item, "label"), coordinates))
+        groups.append({"label": chart_text(item, "label"), "samples": coordinates})
+    ticks = []
+    if x_type != "number":
+        points = payload.get("points")
+        if not isinstance(points, list) or not 1 <= len(points) <= MAX_SCATTER_POINTS:
+            raise ChartError()
+        for raw in points:
+            point = chart_object(raw)
+            ticks.append((_number(point.get("x")), chart_text(point, "label")))
 
     with render_lock:
         figure, axes, font = _figure(style)
         palette = _palette(style)
-        size = style_range(style, "markerSize", 40, 10, 100)
-        for index, (label, coordinates) in enumerate(groups):
-            xs, ys = zip(*coordinates)
-            draw_scatter(axes, xs, ys, color=palette[index % len(palette)], size=size, label=label[:24])
+        for index, group in enumerate(groups):
+            draw_scatter_series(axes, group["samples"], appearance, palette[index % len(palette)], group["label"][:24])
+        draw_scatter_guides(axes, groups, appearance, x_type, font)
+        set_chart_ticks(axes, ticks, font, max_labels=10, label_length=20, fontsize=9)
         _legend(axes, style, font)
         return figure_png(figure)

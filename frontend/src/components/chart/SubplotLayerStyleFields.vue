@@ -4,7 +4,7 @@
     <div class="fields">
       <label class="wide">图例名称<input v-model.trim="styleOptions.legendLabel" type="text" maxlength="40"></label>
       <label>主色<chart-color-picker v-model="styleOptions.color" :label="title + '主色'" show-code /></label>
-      <label>不透明度 {{ Math.round(styleOptions.opacity * 100) }}%
+      <label v-if="kind !== 'scatter'">不透明度 {{ Math.round(styleOptions.opacity * 100) }}%
         <input v-model.number="styleOptions.opacity" type="range" min="0.15" max="1" step="0.01">
       </label>
       <template v-if="kind === 'line'">
@@ -31,23 +31,23 @@
           </label>
         </template>
       </template>
-      <label v-if="kind === 'scatter'" class="wide">散点大小 {{ styleOptions.markerSize }}
-        <input v-model.number="styleOptions.markerSize" type="range" min="10" max="100" step="1">
-      </label>
+      <scatter-style-fields v-if="kind === 'scatter'" class="wide" :settings="styleOptions" :guides="guides" />
     </div>
   </details>
 </template>
 
 <script>
 import ChartColorPicker from './ChartColorPicker.vue'
+import ScatterStyleFields from './ScatterStyleFields.vue'
 
 export default {
   name: 'SubplotLayerStyleFields',
-  components: { ChartColorPicker },
+  components: { ChartColorPicker, ScatterStyleFields },
   props: {
     title: { type: String, required: true },
     kind: { type: String, required: true },
     styleOptions: { type: Object, required: true },
+    guides: Boolean,
   },
 }
 </script>
