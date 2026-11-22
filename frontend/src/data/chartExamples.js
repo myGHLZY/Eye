@@ -2,6 +2,13 @@ const gallerySource = 'https://matplotlib.org/stable/gallery/'
 export const chartEditorRoutes = {
   bar_colors: 'bar-chart-editor',
   pie_features: 'pie-chart-editor',
+  radar_chart: 'special-chart-editor',
+  sankey_basics: 'special-chart-editor',
+  specialty_heatmap: 'special-chart-editor',
+  simple_plot: 'cartesian-chart-editor',
+  scatter_with_legend: 'cartesian-chart-editor',
+  subplot: 'subplot-chart-editor',
+  subplot_overlay: 'subplot-chart-editor',
 }
 
 export const visualizationCategories = {
@@ -50,11 +57,8 @@ const catalog = {
     ["axline", "延伸参考线", "经过的点、斜率或第二个点"],
     ["multicolored_line", "分段着色折线图", "横轴、纵轴、用于着色的数值或类别"],
     ["lines_with_ticks_demo", "带刻线的折线", "路径坐标、刻线间距及方向"],
-    ["barchart", "分组柱状图", "类别、分组、数值"],
     ["bar_label_demo", "带标签的柱状图", "类别、数值、显示标签"],
-    ["bar_stacked", "堆叠柱状图", "类别、构成项、同单位数值"],
     ["hat_graph", "帽形对比柱状图", "类别、两组数值"],
-    ["gradient_bar", "渐变柱状图", "类别、数值、渐变配色"],
     ["barh", "横向条形图", "类别、数值"],
     ["horizontal_barchart_distribution", "发散堆叠条形图", "类别、等级、占比或计数、等级顺序"],
     ["broken_barh", "时间区间图", "对象、开始时间、结束时间或时长"],
@@ -175,6 +179,7 @@ const catalog = {
   ],
   subplots_axes_and_figures: [
     ["subplot", "多子图组合", "各子图的数据、行列位置"],
+    ["subplot_overlay", "重合子图", "两张子图各自的数据、对应的横轴、可选分组或第二数值字段", null],
     ["subplots_demo", "子图网格配置", "子图序列、行数、列数、共享坐标轴设置"],
     ["axes_demo", "自定义坐标区布局", "主图与辅助图数据、坐标区位置"],
     ["gridspec_customization", "非等宽子图网格", "图表数据、网格位置和比例"],
@@ -213,6 +218,7 @@ const catalog = {
   ],
   specialty_plots: [
     ["radar_chart", "雷达图", "指标名称、各指标数值、可选分组"],
+    ["specialty_heatmap", "热力图", "行类别、列类别、单元格数值", "images_contours_and_fields/image_annotated_heatmap"],
     ["advanced_hillshading", "三维地形阴影图", "高程网格、光源方位和仰角"],
     ["anscombe", "安斯库姆四重奏", "四组横纵坐标、可选拟合线"],
     ["hinton_demo", "欣顿矩阵图", "数值矩阵、权重的正负与大小"],
@@ -228,20 +234,21 @@ const catalog = {
 }
 
 export const chartExamples = Object.entries(catalog).flatMap(([category, entries]) =>
-  entries.map(([id, title, fields]) => ({
+  entries.map(([id, title, fields, sourcePath = `${category}/${id}`]) => ({
     id,
     title,
     fields,
     category,
     editorRoute: chartEditorRoutes[id] || null,
     galleryRoute: visualizationCategories[category].name,
-    image: `${import.meta.env.BASE_URL}visualization/${id}.png`,
-    source: `${gallerySource}${category}/${id}.html`,
+    image: `${import.meta.env.BASE_URL}visualization/${sourcePath?.split('/').pop() ?? id}.png`,
+    source: sourcePath ? `${gallerySource}${sourcePath}.html` : null,
   })),
 )
 
 const chartsById = new Map(chartExamples.map((chart) => [chart.id, chart]))
+const mergedBarExamples = new Set(['barchart', 'bar_stacked', 'gradient_bar'])
 
 export function findChartExample(chartId) {
-  return chartsById.get(chartId)
+  return chartsById.get(mergedBarExamples.has(chartId) ? 'bar_colors' : chartId)
 }

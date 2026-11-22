@@ -5,20 +5,16 @@
     </router-link>
 
     <div class="editor-layout">
-      <aside class="panel controls">
-        <div class="tabs" role="group" aria-label="编辑面板">
-          <button type="button" :aria-pressed="panel === 'data'" @click="panel = 'data'">数据来源</button>
-          <button type="button" :aria-pressed="panel === 'style'" @click="panel = 'style'">图表样式</button>
-        </div>
-        <div v-show="panel === 'data'" class="fields">
+      <chart-editor-controls>
+        <template #data>
           <chart-data-picker v-model="selection" :aggregations="aggregations" />
           <template v-if="selection">
             <label class="check"><input v-model="autoRefresh" type="checkbox"> 每 5 秒检查数据变化</label>
             <button class="text-button" type="button" :disabled="loading" @click="loadData">刷新数据</button>
           </template>
-        </div>
+        </template>
 
-        <div v-show="panel === 'style'" class="fields">
+        <template #style>
           <chart-palette-picker :palettes="palettes" :active-id="paletteId" @select="applyPalette" />
           <label class="field">图表标题<input v-model="style.title" type="text" maxlength="60" :placeholder="automaticTitle"></label>
           <label class="field">扇区标签
@@ -67,14 +63,15 @@
               </label>
             </div>
           </details>
-        </div>
-      </aside>
+        </template>
+      </chart-editor-controls>
 
       <div class="preview-stack">
         <chart-preview class="panel" :url="imageUrl" :title="style.title || automaticTitle"
           :busy="loading || rendering" :error="dataError || renderError"
           :empty-message="dataset ? '当前数据没有可绘制的正值。' : '选择数据库、表和字段以生成饼图。'"
           filename="pie-chart.png">
+          <p v-if="dataset?.fromBar" class="note">按原柱状图当前展示的分类数值转换。</p>
           <p v-if="dataset && dataset.combined" class="note">较小的分类已合并为「其他分类」，占比按全部数据计算。</p>
         </chart-preview>
         <section v-if="points.length" class="panel">
@@ -101,19 +98,21 @@
 
 <script>
 import ChartColorPicker from '../components/chart/ChartColorPicker.vue'
+import ChartEditorControls from '../components/chart/ChartEditorControls.vue'
 import ChartDataPicker from '../components/chart/ChartDataPicker.vue'
 import ChartPalettePicker from '../components/chart/ChartPalettePicker.vue'
 import ChartPreview from '../components/chart/ChartPreview.vue'
 import { chartPalettes } from '../data/chartPalettes.js'
 import { fetchPieData, renderPiePreview } from '../api/pieChart.js'
+import { takePieSnapshot } from '../data/chartTransfer.js'
 
 export default {
   name: 'PieChartEditorView',
-  components: { ChartColorPicker, ChartDataPicker, ChartPalettePicker, ChartPreview },
+  components: { ChartColorPicker, ChartDataPicker, ChartEditorControls, ChartPalettePicker, ChartPreview },
   data() {
     return {
-      panel: 'data', selection: null, dataset: null, aggregations: ['sum', 'count'],
-      autoRefresh: true, palettes: chartPalettes, paletteId: 'classic', highlight: '', colors: {},
+      selection: null, dataset: null, aggregations: ['sum', 'average', 'count', 'max', 'min'],
+      autoRefresh: false, palettes: chartPalettes, paletteId: 'classic', highlight: '', colors: {},
       style: {
         title: '', legendTitle: '', legendPosition: 'right', labelMode: 'percent',
         startAngle: 90, clockwise: true, donut: false, showOutline: true, outlineColor: '#ffffff',
@@ -125,6 +124,7 @@ export default {
   computed: {
     points() { return this.dataset?.points || [] },
     automaticTitle() {
+      if (this.dataset?.fromBar) return this.dataset.title
       return this.dataset && this.selection ? `${this.selection.categoryColumn} · ${this.dataset.seriesName}` : ''
     },
     renderStyle() {
@@ -136,6 +136,14 @@ export default {
         colors: this.points.map(point => this.colors[point.key]),
       }
     },
+  },
+  created() {
+    if (this.$route.query.from !== 'bar') return
+    const dataset = takePieSnapshot()
+    if (dataset) {
+      this.dataset = dataset
+      this.applyPalette(this.palettes[0])
+    }
   },
   watch: {
     selection() {
@@ -240,10 +248,7 @@ export default {
 .back-link:hover { text-decoration: underline; }
 .editor-layout { display: grid; grid-template-columns: minmax(235px, 295px) minmax(0, 1fr); gap: 16px; }
 .panel { min-width: 0; padding: 14px; border: 1px solid #dfe7f1; border-radius: 10px; background: #fff; }
-.controls, .preview-stack { display: grid; gap: 12px; min-width: 0; align-self: start; }
-.tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 4px; background: #e8eef7; border-radius: 8px; }
-.tabs button { padding: 7px; border: 0; border-radius: 5px; background: transparent; color: #435774; font: inherit; cursor: pointer; }
-.tabs button[aria-pressed='true'] { background: white; color: #15243b; font-weight: 600; }
+.preview-stack { display: grid; gap: 12px; min-width: 0; align-self: start; }
 .fields { display: grid; gap: 8px; color: #435774; font-size: 13px; }
 .field { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 6px; align-items: center; }
 select, input[type='text'] {

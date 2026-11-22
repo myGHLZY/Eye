@@ -1,13 +1,13 @@
 <template>
   <section aria-labelledby="page-title">
-    <p class="gallery-description">点击图例查看所需字段。彩色图例已支持制作。</p>
+    <p class="gallery-description">彩色图例已支持制作。点击图例打开对应页面。</p>
 
     <div class="gallery-grid">
       <router-link
         v-for="chart in charts"
         :key="chart.id"
-        :to="{ name: 'chart-workbench', params: { chartId: chart.id } }"
-        :aria-label="'打开' + chart.title + '工作台'"
+        :to="{ name: chart.id === 'subplot_overlay' ? chart.editorRoute : 'chart-workbench', params: { chartId: chart.id } }"
+        :aria-label="'打开' + chart.title"
         class="chart-card"
       >
         <div class="chart-image" :class="{ 'pending-preview': !chart.editorRoute }">
@@ -30,7 +30,8 @@ export default {
   },
   computed: {
     charts() {
-      return chartExamples.filter((chart) => chart.category === this.category)
+      return chartExamples.filter(chart => chart.category === this.category)
+        .sort((left, right) => Number(Boolean(right.editorRoute)) - Number(Boolean(left.editorRoute)))
     },
   },
 }

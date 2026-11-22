@@ -10,7 +10,7 @@
         <el-menu
           class="eye-menu"
           :default-active="activeMenu"
-          :default-openeds="openedDatabaseMenus"
+          :default-openeds="openedMenus"
           router
           unique-opened
           background-color="#14233b"
@@ -114,7 +114,7 @@
             show-icon
           />
           <router-view
-            :key="databaseSchemaRoute ? $route.params.connectionId : undefined"
+            :key="databaseSchemaRoute ? $route.params.connectionId : (dataChartEditorRoute ? $route.params.chartId : undefined)"
             @connections-changed="refreshConnections"
           />
         </div>
@@ -273,6 +273,24 @@ export const mainRoutes = [
     component: () => import('./PieChartEditorView.vue'),
     meta: { title: '制作饼图', section: '可视化', activeMenu: 'pie-polar-charts' },
   },
+  {
+    name: 'special-chart-editor',
+    path: 'visualization/special-chart/:chartId(radar_chart|sankey_basics|specialty_heatmap)',
+    component: () => import('./SpecialChartEditorView.vue'),
+    meta: { title: '制作图表', section: '可视化', activeMenu: 'specialty-charts' },
+  },
+  {
+    name: 'cartesian-chart-editor',
+    path: 'visualization/cartesian-chart/:chartId(simple_plot|scatter_with_legend)',
+    component: () => import('./SpecialChartEditorView.vue'),
+    meta: { title: '制作图表', section: '可视化', activeMenu: 'chart-types' },
+  },
+  {
+    name: 'subplot-chart-editor',
+    path: 'visualization/subplot-chart/:chartId(subplot|subplot_overlay)',
+    component: () => import('./SubplotChartEditorView.vue'),
+    meta: { title: '制作多子图组合', section: '可视化', activeMenu: 'subplot-charts' },
+  },
 ]
 
 export default {
@@ -300,17 +318,27 @@ export default {
     }
   },
   computed: {
+    dataChartEditorRoute() {
+      return ['special-chart-editor', 'cartesian-chart-editor', 'subplot-chart-editor'].includes(this.$route.name)
+    },
     databaseSchemaRoute() {
       return this.$route.name === 'database-schema'
     },
     showDatabaseDiagram() {
       return this.databaseSchemaRoute && this.$route.query.view === 'er'
     },
-    openedDatabaseMenus() {
-      if (!this.databaseSchemaRoute && this.$route.name !== 'data-sources') return []
-      return this.connections.length ? ['database', 'database-connections'] : ['database']
+    openedMenus() {
+      if (this.databaseSchemaRoute || this.$route.name === 'data-sources') {
+        return this.connections.length ? ['database', 'database-connections'] : ['database']
+      }
+      const parent = this.navigation.find(entry => entry.items?.some(item => item.name === this.activeMenu))
+      return parent ? [parent.name] : []
     },
     pageLabel() {
+      if (this.dataChartEditorRoute) {
+        const chart = findChartExample(this.$route.params.chartId)
+        if (chart) return '制作' + chart.title
+      }
       if (this.databaseSchemaRoute) {
         const connection = this.connections.find(item => item.id === this.$route.params.connectionId)
         if (connection) return connection.database

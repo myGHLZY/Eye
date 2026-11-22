@@ -1,8 +1,8 @@
 from io import BytesIO
 
-from sqlalchemy import func, literal, select
+from sqlalchemy import func, select, true
 
-from app.service.chart_support import category_point, grouping_columns
+from app.service.chart_support import AGGREGATIONS, category_point, grouping_columns
 from app.service.database_connection import database_engine_for_connection
 
 from app.util.chart import (
@@ -19,33 +19,33 @@ def load_pie_data(payload) -> dict:
     """按分类读取可组成饼图的总量，必要时合并长尾分类。"""
     payload = chart_object(payload)
     aggregation = payload.get("aggregation")
-    if aggregation not in ("count", "sum"):
-        raise ChartError("饼图支持记录数或合计。")
+    if aggregation not in ("count", "sum", "average", "max", "min"):
+        raise ChartError("所选聚合方式无效。")
     connection_id = chart_text(payload, "connectionId", required=True)
     table_name = chart_text(payload, "table", required=True)
     category_name = chart_text(payload, "categoryColumn", required=True)
-    metric_name = chart_text(payload, "valueColumn", required=True) if aggregation == "sum" else ""
+    metric_name = chart_text(payload, "valueColumn", required=True) if aggregation != "count" else ""
+    label, function = AGGREGATIONS[aggregation]
     with database_engine_for_connection(connection_id) as engine, engine.connect() as connection:
-        source, category, metric = grouping_columns(connection, table_name, category_name, metric_name)
+        _, category, metric = grouping_columns(connection, table_name, category_name, metric_name)
         conditions = [category.is_not(None)]
-        value = func.count()
-        minimum = literal(0)
         if metric is not None:
             conditions.append(metric.is_not(None))
-            value = func.sum(metric)
-            minimum = select(func.min(metric)).where(*conditions).correlate(None).scalar_subquery()
-
-        total = select(value).select_from(source).where(*conditions).correlate(None).scalar_subquery()
+        value = function(metric) if metric is not None else function()
+        groups = select(category.label("category"), value.label("amount")).where(*conditions).group_by(category).subquery()
+        minimum = func.min(groups.c.amount)
+        if aggregation == "sum":
+            minimum = select(func.min(metric)).where(*conditions).scalar_subquery()
+        summary = select(func.sum(groups.c.amount).label("total"), minimum.label("minimum")).subquery()
         statement = (
-            select(category, value, total, minimum)
-            .where(*conditions)
-            .group_by(category)
-            .order_by(value.desc(), category.asc())
+            select(groups.c.category, groups.c.amount, summary.c.total, summary.c.minimum)
+            .select_from(groups.join(summary, true()))
+            .order_by(groups.c.amount.desc(), groups.c.category.asc())
             .limit(MAX_SLICES + 1)
         )
         rows = connection.execute(statement).all()
 
-    label = f"{metric_name}（合计）" if metric_name else "记录数"
+    label = f"{metric_name}（{label}）" if metric_name else label
     if not rows:
         return {"points": [], "seriesName": label, "total": 0, "combined": False}
     if rows[0][3] < 0:

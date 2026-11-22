@@ -16,7 +16,7 @@
         <el-card shadow="never" class="workbench-card">
           <div slot="header" class="preview-heading">
             <h3>图例预览</h3>
-            <a :href="chart.source" target="_blank" rel="noopener noreferrer">查看示例代码</a>
+            <a v-if="chart.source" :href="chart.source" target="_blank" rel="noopener noreferrer">查看示例代码</a>
           </div>
           <div class="workbench-preview" :class="{ 'pending-preview': !chart.editorRoute }">
             <img :src="chart.image" :alt="chart.title + '示例'" class="plot-preview">

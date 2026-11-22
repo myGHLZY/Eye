@@ -15,16 +15,21 @@ async function postChart(action, payload, signal) {
 
 export async function fetchBarData(selection, signal) {
   const response = await postChart('data', selection, signal)
-  return (await response.json()).data
+  const data = (await response.json()).data
+  if (selection.groupColumn && !Array.isArray(data.series)) {
+    throw new Error('请重新运行 Flask 后端以加载分组和堆叠柱状图。')
+  }
+  return data
 }
 
-export async function renderBarPreview(points, style, signal) {
-  const response = await postChart('render', { points, style }, signal)
+export async function renderBarPreview(points, style, signal, series = []) {
+  const response = await postChart('render', { points, style, series }, signal)
   if (!response.headers.get('content-type')?.startsWith('image/png')) {
     throw new Error('预览接口没有返回 PNG 图片。')
   }
-  const revision = response.headers.get('X-Eye-Bar-Renderer')
-  if (revision !== '3' && (revision !== '2' || style.significance?.length)) {
+  const revision = Number(response.headers.get('X-Eye-Bar-Renderer'))
+  const required = series.length || style.gradient ? 4 : (style.significance?.length ? 3 : 2)
+  if (!Number.isFinite(revision) || revision < required) {
     throw new Error('5111 端口仍在运行旧版 Flask 渲染服务。请重启后端，再刷新图表。')
   }
   return response.blob()

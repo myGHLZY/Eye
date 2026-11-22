@@ -5,22 +5,28 @@
     </router-link>
 
     <div class="editor-layout">
-      <aside class="editor-controls">
-        <div class="editor-tabs" role="group" aria-label="编辑面板">
-          <button type="button" :aria-pressed="activePanel === 'data'" @click="activePanel = 'data'">数据来源</button>
-          <button type="button" :aria-pressed="activePanel === 'style'" @click="activePanel = 'style'">图表样式</button>
-        </div>
-        <section v-show="activePanel === 'data'" class="panel control-panel" aria-label="数据来源">
-          <chart-data-picker v-model="selection" />
+      <chart-editor-controls>
+        <template #data>
+          <label class="chart-layout-field">图形布局
+            <select v-model="layout">
+              <option value="single">普通柱状图</option>
+              <option value="grouped">分组柱状图</option>
+              <option value="stacked">堆叠柱状图</option>
+            </select>
+          </label>
+          <chart-data-picker v-model="selection" :group-mode="layout === 'single' ? 'none' : 'required'" />
+          <p v-if="layout === 'stacked' && ['average', 'max', 'min'].includes(selection?.aggregation)" class="preview-note">
+            每一段先按系列计算，整根柱高为各段之和。
+          </p>
           <div v-if="selection" class="refresh-options">
             <label><input v-model="autoRefresh" type="checkbox"> 每 5 秒检查数据变化</label>
             <button class="text-button" type="button" :disabled="loadingData" @click="loadData">刷新数据</button>
           </div>
-        </section>
+        </template>
 
-        <section v-show="activePanel === 'style'" class="panel control-panel style-panel" aria-label="图表样式">
+        <template #style>
           <div class="style-colors">
-            <fieldset class="color-modes">
+            <fieldset v-if="layout === 'single'" class="color-modes">
               <legend class="sr-only">配色模式</legend>
               <label :class="{ selected: perBar }">
                 <input v-model="perBar" class="sr-only" name="bar-color-mode" type="radio" :value="true">
@@ -31,9 +37,9 @@
                 统一配色
               </label>
             </fieldset>
-            <template v-if="perBar">
+            <template v-if="perBar || layout !== 'single'">
               <chart-bar-style-fields v-if="bars.length" :bars="bars" :show-legend="style.showLegend"
-                :color-groups="colorGroups" :active-group="activeColorGroup"
+                :color-groups="colorGroups" :active-group="activeColorGroup" :is-series="layout !== 'single'"
                 @change="updateBarStyle" @choose-group="applyColorGroup" />
               <p v-else class="style-empty">选择数据后可逐柱配色。</p>
             </template>
@@ -42,15 +48,18 @@
               <chart-color-picker :value="style.color" label="统一柱形颜色" show-code
                 @input="updateStyle({ color: $event })" />
             </div>
+            <label v-if="layout === 'single'" class="gradient-option">
+              <input v-model="style.gradient" type="checkbox"> 柱形渐变
+            </label>
           </div>
-          <chart-appearance-fields :value="style" :per-bar="perBar" :automatic-title="automaticTitle"
+          <chart-appearance-fields :value="style" :per-bar="perBar || layout !== 'single'" :automatic-title="automaticTitle"
             :automatic-legend="seriesName" :automatic-x-label="automaticXLabel" :automatic-y-label="seriesName"
             @change="updateStyle" />
           <chart-spacing-fields :bar-spacing="style.barSpacing" :y-tick-bins="style.yTickBins"
             @change="updateStyle" />
           <chart-decoration-fields :value="style" @change="updateStyle" />
-        </section>
-      </aside>
+        </template>
+      </chart-editor-controls>
 
       <div class="preview-stack">
         <chart-preview class="panel" :url="imageUrl" :title="style.title || automaticTitle"
@@ -60,8 +69,12 @@
             共展示数值最高的 {{ dataset.points.length }} 个分类。
             <span v-if="dataset.valueUnit === '%'">占比按全部分类的总和计算。</span>
           </p>
+          <button v-if="points.length" type="button" class="convert-button" :disabled="!canConvert"
+            :title="canConvert ? '使用当前图表数据生成饼图' : '饼图需要非负数值且总和大于零'"
+            @click="convertToPie">转为饼图</button>
+          <p v-if="points.length && !canConvert" class="preview-note">负值或全为零的数据无法转换为饼图。</p>
         </chart-preview>
-        <chart-statistics-fields :bars="statisticsBars" :scope="statisticsScope"
+        <chart-statistics-fields v-if="layout === 'single'" :bars="statisticsBars" :scope="statisticsScope"
           :is-average="selection?.aggregation === 'average'" :value-unit="dataset?.valueUnit || ''"
           @change="updateAnnotations" />
       </div>
@@ -73,6 +86,7 @@
 import ChartAppearanceFields from '../components/chart/ChartAppearanceFields.vue'
 import ChartBarStyleFields from '../components/chart/ChartBarStyleFields.vue'
 import ChartColorPicker from '../components/chart/ChartColorPicker.vue'
+import ChartEditorControls from '../components/chart/ChartEditorControls.vue'
 import ChartDataPicker from '../components/chart/ChartDataPicker.vue'
 import ChartDecorationFields from '../components/chart/ChartDecorationFields.vue'
 import ChartPreview from '../components/chart/ChartPreview.vue'
@@ -80,20 +94,21 @@ import ChartSpacingFields from '../components/chart/ChartSpacingFields.vue'
 import ChartStatisticsFields from '../components/chart/ChartStatisticsFields.vue'
 import { fetchBarData, renderBarPreview } from '../api/barChart.js'
 import { chartPalettes } from '../data/chartPalettes.js'
+import { transferBarToPie } from '../data/chartTransfer.js'
 
 export default {
   name: 'BarChartEditorView',
   components: {
-    ChartAppearanceFields, ChartBarStyleFields, ChartColorPicker, ChartDataPicker,
+    ChartAppearanceFields, ChartBarStyleFields, ChartColorPicker, ChartDataPicker, ChartEditorControls,
     ChartDecorationFields, ChartPreview, ChartSpacingFields, ChartStatisticsFields,
   },
   data() {
     return {
-      activePanel: 'data',
       selection: null,
       dataset: null,
-      autoRefresh: true,
+      autoRefresh: false,
       perBar: true,
+      layout: 'single',
       barStyles: {},
       colorGroups: chartPalettes,
       activeColorGroup: '',
@@ -107,6 +122,7 @@ export default {
         showBarOutline: false, barOutlineColor: '#263c5a', barOutlineWidth: 1,
         showGrid: false, showVerticalGrid: false, showZeroLine: true, gridColor: '#e4ebf4', gridStyle: 'solid',
         chartSize: 'wide', dpi: 130,
+        gradient: false,
       },
       loadingData: false,
       rendering: false,
@@ -119,6 +135,13 @@ export default {
     points() {
       return this.dataset?.points || []
     },
+    series() {
+      return this.dataset?.series || []
+    },
+    canConvert() {
+      return this.points.some(point => point.value > 0) && this.points.every(point => point.value >= 0) &&
+        this.series.every(item => item.values.every(value => value >= 0))
+    },
     statisticsBars() {
       return this.points.map(point => ({ ...point, key: this.barKey(point) }))
     },
@@ -129,7 +152,8 @@ export default {
     bars() {
       const group = this.colorGroups.find(item => item.id === this.activeColorGroup)
       const palette = (group || this.colorGroups[0]).colors
-      return this.points.map((point, index) => {
+      const entries = this.layout === 'single' ? this.points : this.series
+      return entries.map((point, index) => {
         const key = this.barKey(point)
         return {
           key,
@@ -157,13 +181,14 @@ export default {
   watch: {
     selection(next, previous) {
       if (next?.connectionId !== previous?.connectionId || next?.table !== previous?.table ||
-        next?.categoryColumn !== previous?.categoryColumn) {
+        next?.categoryColumn !== previous?.categoryColumn || next?.groupColumn !== previous?.groupColumn) {
         this.activeColorGroup = ''
       }
       this.resetData()
     },
     autoRefresh() { this.scheduleRefresh() },
     perBar() { this.scheduleRender() },
+    layout() { this.scheduleRender() },
     points() { this.scheduleRender() },
     style() { this.scheduleRender() },
   },
@@ -177,8 +202,13 @@ export default {
   },
   methods: {
     barKey(point) {
-      const { connectionId, table, categoryColumn } = this.selection || {}
-      return JSON.stringify([connectionId, table, categoryColumn, point.key ?? point.label])
+      const { connectionId, table, categoryColumn, groupColumn } = this.selection || {}
+      return JSON.stringify([connectionId, table, categoryColumn, groupColumn, point.key ?? point.label])
+    },
+    convertToPie() {
+      if (!this.canConvert) return
+      transferBarToPie(this.points, this.seriesName, this.style.title || this.automaticTitle)
+      this.$router.push({ name: 'pie-chart-editor', params: { chartId: 'pie_features' }, query: { from: 'bar' } })
     },
     applyColorGroup(group) {
       this.activeColorGroup = group.id
@@ -205,6 +235,7 @@ export default {
     },
     resetData() {
       if (this._closed) return
+      this.annotations = {}
       clearTimeout(this._refreshTimer)
       this._dataRequest?.abort()
       this._dataRequest = null
@@ -255,7 +286,7 @@ export default {
         this.clearImage()
         return
       }
-      if (this.perBar) {
+      if (this.perBar || this.layout !== 'single') {
         for (const { key, color, legendLabel } of this.bars) {
           if (!this.barStyles[key]) this.$set(this.barStyles, key, { color, legendLabel })
         }
@@ -268,19 +299,27 @@ export default {
       try {
         const style = {
           ...this.style,
-          ...this.annotations,
+          ...(this.layout === 'single' ? this.annotations : {}),
+          layout: this.layout,
+          gradient: this.layout === 'single' && this.style.gradient,
           title: this.style.title || this.automaticTitle.slice(0, 60),
           xLabel: this.style.xLabel || this.automaticXLabel.slice(0, 60),
           yLabel: this.style.yLabel || this.seriesName.slice(0, 60),
           legendLabel: this.style.legendLabel || this.seriesName.slice(0, 60),
           valueUnit: this.dataset?.valueUnit || '',
         }
-        if (this.perBar) {
+        const series = this.layout === 'single' ? [] : this.series
+        if (series.length) {
+          style.seriesColors = this.bars.map(bar => bar.color)
+        } else if (this.perBar && this.layout === 'single') {
           style.barColors = this.bars.map(bar => bar.color)
           style.barLabels = this.bars.map(bar => bar.legendLabel)
         }
         const points = this.points.map(({ label, value }) => ({ label, value }))
-        const image = await renderBarPreview(points, style, request.signal)
+        const seriesWithLabels = series.map((item, index) => ({
+          ...item, label: this.style.showLegend ? this.bars[index].legendLabel : item.label,
+        }))
+        const image = await renderBarPreview(points, style, request.signal, seriesWithLabels)
         if (this._closed || this._renderRequest !== request) return
         const url = URL.createObjectURL(image)
         this.clearImage()
@@ -303,23 +342,8 @@ export default {
 .back-link { display: inline-block; margin: 5px 0 15px; color: #235a9f; text-decoration: none; }
 .back-link:hover, .text-button:hover { text-decoration: underline; }
 .editor-layout { display: grid; grid-template-columns: minmax(220px, 295px) minmax(0, 1fr); gap: 16px; }
-.editor-controls { display: grid; gap: 14px; align-self: start; min-width: 0; }
 .panel { padding: 16px; background: #fff; border: 1px solid #dfe7f1; border-radius: 10px; }
 .preview-stack { display: grid; align-self: start; gap: 14px; min-width: 0; }
-.control-panel { display: grid; gap: 11px; }
-.editor-tabs { display: flex; gap: 4px; padding: 4px; background: #e8eef7; border-radius: 8px; }
-.editor-tabs button {
-  flex: 1;
-  padding: 7px 8px;
-  border: 0;
-  border-radius: 5px;
-  background: transparent;
-  color: #435774;
-  font: inherit;
-  cursor: pointer;
-}
-.editor-tabs button[aria-pressed='true'] { background: white; color: #15243b; font-weight: 600; }
-.style-panel { padding: 12px; gap: 11px; }
 .style-colors {
   display: grid;
   gap: 8px;
@@ -359,6 +383,11 @@ export default {
 .refresh-options label { display: flex; align-items: center; gap: 5px; }
 input[type='radio'], input[type='checkbox'] { margin: 0; accent-color: #356fe5; }
 .preview-note { margin: 10px 0 0; color: #52647d; }
+.chart-layout-field { display: grid; gap: 5px; }
+.chart-layout-field select { padding: 7px; border: 1px solid #cdd9e9; border-radius: 6px; background: #fff; font: inherit; }
+.gradient-option { display: flex; align-items: center; gap: 6px; color: #435774; font-size: 13px; }
+.convert-button { margin-top: 10px; padding: 6px 12px; border: 1px solid #a9c6ed; border-radius: 6px; background: #f3f7fc; color: #235a9f; font: inherit; cursor: pointer; }
+.convert-button:disabled { cursor: default; color: #73869f; }
 .refresh-options { display: grid; gap: 6px; }
 .text-button { justify-self: start; padding: 2px 0; border: 0; background: none; color: #235a9f; font: inherit; cursor: pointer; }
 .text-button:disabled { color: #72809a; cursor: default; }

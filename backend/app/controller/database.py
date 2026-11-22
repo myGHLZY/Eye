@@ -5,6 +5,7 @@ from werkzeug.exceptions import RequestEntityTooLarge
 from app.database.database import DatabaseConfigurationError
 
 from app.service.bar_chart import BAR_RENDERER_REVISION, load_bar_data, render_bar_chart
+from app.service.cartesian_charts import load_line_data, load_scatter_data, render_line_chart, render_scatter_chart
 from app.service.database_connection import (
     DatabaseConnectionError,
     DatabaseConnectionNotFoundError,
@@ -15,12 +16,21 @@ from app.service.database_connection import (
     test_connection,
 )
 from app.service.pie_chart import load_pie_data, render_pie_chart
+from app.service.heatmap_chart import load_heatmap_data, render_heatmap_chart
+from app.service.radar_chart import load_radar_data, render_radar_chart
+from app.service.sankey_chart import load_sankey_data, render_sankey_chart
+from app.service.subplot_chart import render_subplot_chart
 from app.service.table_rows import TableRowsError, list_table_rows, mutate_table_rows
 from app.service.table_schema import get_schema_diagram, get_table_schema, list_tables
 from app.util.chart import ChartError
 from app.util.response import ok
 
 blueprint = Blueprint("database", __name__, url_prefix="/api/database")
+ADDITIONAL_CHARTS = {
+    "line": (load_line_data, render_line_chart),
+    "scatter": (load_scatter_data, render_scatter_chart),
+    "heatmap": (load_heatmap_data, render_heatmap_chart),
+}
 
 
 @blueprint.before_request
@@ -115,10 +125,50 @@ def pie_chart_render():
     return _chart_image(render_pie_chart, "pie-chart.png", "INVALID_PIE_CHART")
 
 
-def _chart_image(render, filename: str, error_code: str, *, headers=None):
+@blueprint.post("/charts/radar/data")
+def radar_chart_data():
+    """查询雷达图的指标和系列。"""
+    return _database_response(load_radar_data, _read_json(32 * 1024), chart_error="INVALID_RADAR_CHART")
+
+
+@blueprint.post("/charts/radar/render")
+def radar_chart_render():
+    """生成雷达图 PNG。"""
+    return _chart_image(render_radar_chart, "radar-chart.png", "INVALID_RADAR_CHART")
+
+
+@blueprint.post("/charts/sankey/data")
+def sankey_chart_data():
+    """查询桑基图的来源、目标与流量。"""
+    return _database_response(load_sankey_data, _read_json(32 * 1024), chart_error="INVALID_SANKEY_CHART")
+
+
+@blueprint.post("/charts/sankey/render")
+def sankey_chart_render():
+    """生成桑基图 PNG。"""
+    return _chart_image(render_sankey_chart, "sankey-chart.png", "INVALID_SANKEY_CHART")
+
+
+@blueprint.post("/charts/<any(line,scatter,heatmap):kind>/<any(data,render):action>")
+def additional_chart(kind, action):
+    """处理折线图、分组散点图和热力图的取数或渲染。"""
+    load, render = ADDITIONAL_CHARTS[kind]
+    error_code = f"INVALID_{kind.upper()}_CHART"
+    if action == "data":
+        return _database_response(load, _read_json(32 * 1024), chart_error=error_code)
+    return _chart_image(render, f"{kind}-chart.png", error_code, maximum=96 * 1024)
+
+
+@blueprint.post("/charts/subplot/render")
+def subplot_chart_render():
+    """读取各子图数据并返回组合 PNG。"""
+    return _chart_image(render_subplot_chart, "subplot-chart.png", "INVALID_SUBPLOT_CHART")
+
+
+def _chart_image(render, filename: str, error_code: str, *, headers=None, maximum=32 * 1024):
     """统一解析渲染请求并封装 PNG 响应。"""
     try:
-        image = render(_read_json(32 * 1024))
+        image = render(_read_json(maximum))
     except ChartError as error:
         return _error(400, error_code, str(error))
     response = send_file(image, mimetype="image/png", download_name=filename)

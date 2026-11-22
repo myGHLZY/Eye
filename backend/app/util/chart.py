@@ -109,3 +109,18 @@ def figure_png(figure) -> BytesIO:
     FigureCanvasAgg(figure).print_png(image)
     image.seek(0)
     return image
+
+
+def draw_bars(axes, x, y, *, width=0.65, **style):
+    """在已有坐标轴上绘制柱形，供独立图与子图共用。"""
+    return axes.bar(x, y, width=width, **style)
+
+
+def draw_line(axes, x, y, *, markers=True, marker="o", markersize=4, linewidth=1.8, **style):
+    """在已有坐标轴上绘制带可选数据点的折线。"""
+    return axes.plot(x, y, linewidth=linewidth, marker=marker if markers else None, markersize=markersize, **style)
+
+
+def draw_scatter(axes, x, y, *, size=40, alpha=0.75, **style):
+    """在已有坐标轴上绘制半透明散点。"""
+    return axes.scatter(x, y, s=size, alpha=alpha, **style)

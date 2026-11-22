@@ -3,7 +3,7 @@
     <chart-palette-picker :palettes="colorGroups" :active-id="activeGroup" @select="$emit('choose-group', $event)" />
 
     <details class="bar-style-details">
-      <summary>逐柱调整 <span v-if="showLegend">图例</span></summary>
+      <summary>{{ isSeries ? '系列调整' : '逐柱调整' }} <span v-if="showLegend">图例</span></summary>
       <div class="bar-style-rows">
         <div v-for="bar in bars" :key="bar.key" class="bar-style-row" :class="{ 'with-legend': showLegend }">
           <div class="bar-color">
@@ -30,6 +30,7 @@ export default {
   props: {
     bars: { type: Array, required: true },
     showLegend: Boolean,
+    isSeries: Boolean,
     colorGroups: { type: Array, required: true },
     activeGroup: { type: String, default: '' },
   },

@@ -27,6 +27,13 @@
 | POST | [`/api/database/charts/bar/render`](#api-bar-chart-render) | 将图表数据和样式渲染为 PNG |
 | POST | [`/api/database/charts/pie/data`](#api-pie-chart-data) | 查询饼图分类数值及总量 |
 | POST | [`/api/database/charts/pie/render`](#api-pie-chart-render) | 渲染饼图或环形图 PNG |
+| POST | [`/api/database/charts/radar/data`](#api-specialty-charts) | 查询雷达图指标 |
+| POST | [`/api/database/charts/radar/render`](#api-specialty-charts) | 渲染雷达图 PNG |
+| POST | [`/api/database/charts/sankey/data`](#api-specialty-charts) | 查询桑基图流量 |
+| POST | [`/api/database/charts/sankey/render`](#api-specialty-charts) | 渲染桑基图 PNG |
+| POST | [`/api/database/charts/{line,scatter,heatmap}/data`](#api-additional-charts) | 查询折线、分组散点或热力图数据 |
+| POST | [`/api/database/charts/{line,scatter,heatmap}/render`](#api-additional-charts) | 渲染对应图表 PNG |
+| POST | [`/api/database/charts/subplot/render`](#api-subplot-chart) | 读取并渲染多子图组合 |
 
 <a name="api-health"></a>
 
@@ -309,7 +316,7 @@
 
 `POST /api/database/charts/bar/data`
 
-后端的 `app/service/bar_chart.py` 负责取数，`bar_chart_render.py` 负责渲染，`bar_chart_annotations.py` 负责误差棒和显著性标注。柱状图和饼图共用 `app/service/chart_support.py` 的数据库字段校验及 `app/util/chart.py` 的参数、字体和 PNG 工具。
+后端的 `app/service/bar_chart.py` 负责取数和渲染，`bar_chart_annotations.py` 负责误差棒和显著性标注。各图表共用 `app/service/chart_support.py` 的数据库字段校验及 `app/util/chart.py` 的参数、字体和 PNG 工具。
 
 连接列表返回的 `id` 对应 `connectionId`。请求提供表名、分类字段与聚合方式。`count` 可省略 `valueColumn`，其余方式均需要数值字段。
 
@@ -402,7 +409,11 @@
 }
 ```
 
-PNG 响应带有 `X-Eye-Bar-Renderer: 3`。绘制显著性标注时，绘图区外的图例留出括号与星号所需的空间。
+PNG 响应带有 `X-Eye-Bar-Renderer: 4`。绘制显著性标注时，绘图区外的图例留出括号与星号所需的空间。
+
+### 分组、堆叠与渐变
+
+取数请求加 `groupColumn`（不同于 `categoryColumn`）可按两个分类维度统计合计、平均值、记录数、最大值、最小值或占比，返回 `points` 和 `series`。每个系列提供 `label`、`key` 和与横轴分类同序的 `values`，缺少的组合补零。最多 24 个横轴分类和 8 个系列。堆叠柱高是各段聚合值之和。渲染时将 `series` 与 `points` 一起传入，并设置 `style.layout` 为 `grouped` 或 `stacked`。可通过 `style.seriesColors` 逐系列配色。普通柱状图可开启 `style.gradient`，使用所选柱色生成渐变。误差棒和显著性标注适用于普通柱状图。
 
 两个接口参数不合法时返回 HTTP 400 和 `INVALID_BAR_CHART`。常见格式与样式错误使用统一提示。字段选择错误、占比分母为零等需要不同处理的情况保留具体说明。超过 32 KiB 的请求返回 HTTP 413。取数接口沿用表结构接口的连接和数据表错误响应。
 
@@ -422,7 +433,7 @@ PNG 响应带有 `X-Eye-Bar-Renderer: 3`。绘制显著性标注时，绘图区�
 }
 ```
 
-`aggregation` 可选 `sum` 或 `count`。合计需要非负数值字段，记录数可省略 `valueColumn`。分类为 SQL NULL 的行跳过，合计也跳过数值为 SQL NULL 的行。返回 `data.seriesName`、`total`、`combined` 及 `points`，每个点提供 `key`、`label` 和 `value`。聚合值为零的分类省略。超过 12 个正值分类时保留前 11 个，其余合并为「其他分类」，占比以完整总量计算。
+`aggregation` 可选 `sum`、`count`、`average`、`max` 或 `min`，记录数可省略 `valueColumn`。饼图以各分类聚合值的和作为分母，聚合值须非负，合计模式也要求原始数值非负。分类为 SQL NULL 的行跳过，数值聚合也跳过数值为 SQL NULL 的行。返回 `data.seriesName`、`total`、`combined` 及 `points`，每个点提供 `key`、`label` 和 `value`。聚合值为零的分类省略。超过 12 个正值分类时保留前 11 个，其余合并为「其他分类」。
 
 <a name="api-pie-chart-render"></a>
 
@@ -444,3 +455,54 @@ PNG 响应带有 `X-Eye-Bar-Renderer: 3`。绘制显著性标注时，绘图区�
 | `figureColor`、`transparentBackground`、`dpi` | 背景颜色、透明背景和导出 DPI（130、200、300） |
 
 小于 3.5% 的扇区省略片内标签，工作台数据表仍可查看数值和占比。参数错误返回 HTTP 400 和 `INVALID_PIE_CHART`。请求体上限为 32 KiB。取数接口沿用表结构接口的连接和数据表错误响应。
+
+<a name="api-specialty-charts"></a>
+
+## 雷达图与桑基图
+
+| 图表 | 取数请求 | 渲染请求 |
+| --- | --- | --- |
+| 雷达图 | `POST /api/database/charts/radar/data`，以 `categoryColumn` 为指标，可用 `groupColumn` 比较多个系列 | 将 `points` 和可选 `series` 发至 `POST /api/database/charts/radar/render`。支持 `style.title`、`colors`、`fill` |
+| 桑基图 | `POST /api/database/charts/sankey/data`，用 `categoryColumn` 作来源、`groupColumn` 作目标 | 将 `flows` 发至 `POST /api/database/charts/sankey/render`。支持 `style.title`、`colors`、`flowOpacity`、`showFlowValues` |
+
+取数沿用数据库连接、表名和数值字段参数。工作台支持 `sum` 与 `count`。雷达图要求 3 至 12 个非负指标。桑基图每条 `flows` 记录包含 `source`、`target`、`value` 及可选的 `sourceKey`、`targetKey`，绘制最多 24 条双列流向。流带宽度与 `value` 成正比。`showFlowValues: true` 可在图上标注流量，标签密集时优先显示大流量。渲染结果为 PNG。
+
+<a name="api-additional-charts"></a>
+
+## 折线图、分组散点图与热力图
+
+每种图使用 `POST /api/database/charts/{kind}/data` 和 `POST /api/database/charts/{kind}/render`。取数沿用 `connectionId`、`table`、`categoryColumn`、`valueColumn` 和可选的 `groupColumn`。渲染将取数结果和 `style` 一同提交。
+
+| `kind` | 生成规则 |
+| --- | --- |
+| `line` | 横轴升序，数值与日期按实际间距绘制。可用第二字段分系列，缺失值会断线。最多 96 个横轴位置和 8 个系列。 |
+| `scatter` | `categoryColumn`、`valueColumn` 为两列数值，`groupColumn` 为分组。每条原始记录是一个点，最多 500 个点和 8 组。 |
+| `heatmap` | 长表模式用 `categoryColumn` 为行、`groupColumn` 为列，可按合计、记录数、平均值、最大值或最小值着色。宽表模式用 `layout: "wide"` 将 `valueColumns` 按选择顺序绘为列。缺失格显示灰色，最多 24 行、16 列。 |
+
+宽表取数示例。以 `year` 为行，读取 `Q1` 至 `Q4` 的原值。`rowMin`、`rowMax` 为可选的数值行范围，包含端点。行字段重复时可使用 `sum`、`average`、`min` 或 `max` 分别汇总每列。
+
+```json
+{
+  "layout": "wide",
+  "connectionId": "连接标识",
+  "table": "UKgas",
+  "categoryColumn": "year",
+  "valueColumns": ["Q1", "Q2", "Q3", "Q4"],
+  "aggregation": "raw",
+  "rowMin": 1963,
+  "rowMax": 1986
+}
+```
+
+<a name="api-subplot-chart"></a>
+
+## 多子图组合
+
+`POST /api/database/charts/subplot/render` 接受 `panels` 与 `style`，返回 `image/png`。最多 6 个子图，`style.columns` 允许 1 至 3 列，另支持总标题、题注、图例与 DPI。`kind` 支持 `bar`、`line`、`bar_line`、`scatter` 与 `overlay`。
+
+- `bar_line` 用 `selection.secondaryValueColumn` 指定折线数值字段，柱与线采用同一横轴和聚合口径。设 `rightAxis: true` 可让折线使用右纵轴。
+- `scatter` 可省略 `groupColumn`。设 `fit: true` 可显示全体散点的一元线性拟合，R² 和 RMSE 根据拟合残差计算。
+- `overlay` 使用 `layers`，包含两个带 `kind`（`bar`、`line` 或 `scatter`）和 `selection` 的子图配置。两组数据分别查询，横轴按同类型的类别、日期或数值对齐。`rightAxis: true` 将第二张子图分配给右纵轴。
+- 重合子图中的 `bar` 和 `line` 可用 `selection.groupColumn` 分组，也可用 `selection.secondaryValueColumn` 为同一横轴选取第二个数值字段。多系列柱形按横轴值并排，两个数值字段共用聚合方式。
+- `panel.title`、`xLabel`、`yLabel`、`rightLabel` 分别设置子图标题及轴名。`panel.style` 支持 `backgroundColor`、`grid`（`none`、`x`、`y`、`both`）、`frame`（`none`、`axes`、`box`）、`legend`（`inherit`、`none`、`auto`、`top-left`、`top-right`、`bottom`）、`tickRotation`（`null`、`0`、`25`、`45`）及左右纵轴范围 `yMin`、`yMax`、`rightYMin`、`rightYMax`。范围可传 `null` 以保留自动缩放。
+- `layers[].style` 支持 `color`、`opacity`、`legendLabel`、`lineStyle`（`solid`、`dashed`、`dotted`）、`lineWidth`、`markers`、`lineMarker`（`circle`、`triangle`、`square`、`diamond`）、`lineMarkerSize` 和散点的 `markerSize`。可用 `layers[].secondSeriesStyle` 单独设置第二系列。其他图形使用 `panel.primaryStyle`，`bar_line` 的折线使用 `panel.secondaryStyle`。`panel.style.legendFrame` 控制图例边框。
