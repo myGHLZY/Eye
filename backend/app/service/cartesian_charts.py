@@ -6,10 +6,12 @@ from sqlalchemy import literal, or_, select
 
 from app.service.chart_support import AGGREGATIONS, category_point, grouping_columns, original_rows, paired_totals
 from app.service.database_connection import database_engine_for_connection
+from app.service.distribution_charts import histogram_bins, histogram_edges
 from app.service.scatter_style import draw_scatter_guides, draw_scatter_series, scatter_style
 from app.util.chart import (
-    ChartError, chart_font, chart_number, chart_object, chart_text, draw_line, figure_png,
-    render_lock, set_chart_ticks, style_choice, style_flag,
+    ChartError, chart_figure, chart_legend, chart_number, chart_object, chart_palette, chart_text,
+    draw_line, figure_png, json_chart_number, render_lock, set_chart_ticks, style_cartesian_axes,
+    style_choice, style_flag,
 )
 
 MAX_LINE_POINTS = 96
@@ -36,7 +38,7 @@ def _axis_type(value):
     return "number" if type(value) in (int, float, Decimal) else "category"
 
 
-def load_line_data(payload) -> dict:
+def load_line_data(payload, *, chart_name="折线图") -> dict:
     """按横轴升序读取聚合值，可选第二字段形成多条线。"""
     payload = chart_object(payload)
     mode = chart_text(payload, "aggregation", required=True)
@@ -58,7 +60,7 @@ def load_line_data(payload) -> dict:
         entries = {(category, group): chart_number(value) for category, group, value in rows if category in visible}
         groups = list(dict.fromkeys(group for _, group in entries))
         if len(groups) > MAX_SERIES:
-            raise ChartError(f"折线图最多支持 {MAX_SERIES} 个系列。")
+            raise ChartError(f"{chart_name}最多支持 {MAX_SERIES} 个系列。")
         series = [
             {"label": str(group)[:120] or "空字符串", "values": [entries.get((category, group)) for category in categories]}
             for group in groups
@@ -142,7 +144,7 @@ def _load_original_line(payload, secondary):
     return result
 
 
-def load_scatter_data(payload) -> dict:
+def load_scatter_data(payload, *, numeric_x=False) -> dict:
     """每条记录绘制一个点，横轴支持数值、日期或类别，分组可选。"""
     payload = chart_object(payload)
     connection_id = chart_text(payload, "connectionId", required=True)
@@ -156,7 +158,7 @@ def load_scatter_data(payload) -> dict:
     if group_name in (x_name, y_name):
         raise ChartError("请选择独立的分组字段。")
     with database_engine_for_connection(connection_id) as engine, engine.connect() as connection:
-        source, x, y = grouping_columns(connection, table_name, x_name, y_name, group_name)
+        source, x, y = grouping_columns(connection, table_name, x_name, y_name, group_name, numeric_axis=numeric_x)
         group = source.c[group_name] if group_name else literal("数据")
         query = select(x, y, group).where(x.is_not(None), y.is_not(None), group.is_not(None))
         rows = connection.execute(query.order_by(x, y, group).limit(raw_limit + 1)).all()
@@ -180,62 +182,37 @@ def load_scatter_data(payload) -> dict:
     }
 
 
-def _figure(style):
-    """配置折线图与散点图共用的画布和字体。"""
-    from matplotlib.figure import Figure
+def load_scatter_histogram_data(payload):
+    return load_scatter_data(payload, numeric_x=True)
 
-    font = chart_font()
-    figure = Figure(figsize=(9, 5), dpi=130, layout="constrained", facecolor="#ffffff")
+
+def load_stacked_area_data(payload):
+    payload = chart_object(payload)
+    if payload.get("aggregation") not in LINE_AGGREGATIONS or payload.get("secondaryValueColumn"):
+        raise ChartError("请选择支持的横轴聚合方式和系列字段。")
+    return load_line_data(payload, chart_name="堆叠面积图")
+
+
+def _figure(style):
+    figure, font = chart_figure(style)
     axes = figure.subplots()
-    for method, key in ((figure.suptitle, "title"), (axes.set_xlabel, "xLabel"), (axes.set_ylabel, "yLabel")):
-        method(chart_text(style, key, maximum=60), fontproperties=font, parse_math=False)
-    axes.set_axisbelow(True)
-    if style_flag(style, "showGrid", True):
-        axes.grid(color="#e5edf6", linewidth=0.7)
+    style_cartesian_axes(axes, style, font)
     return figure, axes, font
 
 
-def _palette(style):
-    """读取前端预设色组，缺省时使用 Matplotlib 默认颜色。"""
-    from matplotlib.colors import is_color_like
-
-    colors = style.get("colors", [])
-    if not isinstance(colors, list) or any(not isinstance(color, str) or not is_color_like(color) for color in colors):
-        raise ChartError()
-    return colors or [f"C{index}" for index in range(MAX_SERIES)]
-
-
-def _number(value):
-    """校验来自 JSON 的真实数值。"""
-    if type(value) not in (int, float):
-        raise ChartError()
-    return chart_number(value)
-
-
-def _legend(axes, style, font):
-    """显示系列图例，并按纯文本处理分类名。"""
-    handles, names = axes.get_legend_handles_labels()
-    if handles and style_flag(style, "showLegend", True):
-        legend = axes.legend(handles, names, prop=font, frameon=False)
-        for label in legend.get_texts():
-            label.set_parse_math(False)
-
-
-def render_line_chart(payload):
-    """保持数值、日期间距，并在缺失组合处断开折线。"""
-    payload = chart_object(payload)
-    style = chart_object(payload.get("style", {}))
+def _cartesian_series(payload, style, missing):
     points = payload.get("points")
     series = payload.get("series", [])
     if not isinstance(points, list) or not 1 <= len(points) <= MAX_LINE_POINTS or not isinstance(series, list) or len(series) > MAX_SERIES:
         raise ChartError()
-    positions, labels, values = [], [], []
+    positions, labels = [], []
+    values = []
     for index, raw in enumerate(points):
         point = chart_object(raw)
-        positions.append(_number(point.get("x", index)))
+        positions.append(json_chart_number(point.get("x", index)))
         labels.append(chart_text(point, "label"))
         value = point.get("value")
-        values.append(_number(value) if value is not None else float("nan"))
+        values.append(json_chart_number(value) if value is not None else missing)
     lines = [(chart_text(style, "legendLabel"), values)]
     if series:
         lines = []
@@ -244,32 +221,64 @@ def render_line_chart(payload):
             group_values = item.get("values")
             if not isinstance(group_values, list) or len(group_values) != len(points):
                 raise ChartError()
-            lines.append((chart_text(item, "label"), [_number(value) if value is not None else float("nan") for value in group_values]))
+            values = [json_chart_number(value) if value is not None else missing for value in group_values]
+            lines.append((chart_text(item, "label"), values))
+    return positions, labels, lines
+
+
+def render_line_chart(payload):
+    """保持数值、日期间距，并在缺失组合处断开折线。"""
+    payload = chart_object(payload)
+    style = chart_object(payload.get("style", {}))
+    positions, labels, lines = _cartesian_series(payload, style, float("nan"))
 
     with render_lock:
         figure, axes, font = _figure(style)
-        palette = _palette(style)
+        palette = chart_palette(style)
         show_markers = style_flag(style, "showMarkers", True)
         for index, (label, values) in enumerate(lines):
             plotted = list(zip(positions, values))
-            if series and payload.get("rawRecords"):
+            if payload.get("series") and payload.get("rawRecords"):
                 plotted = [(x, y) for x, y in plotted if not isnan(y)]
             if plotted:
                 xs, ys = zip(*plotted)
                 draw_line(axes, xs, ys, color=palette[index % len(palette)],
                           markers=show_markers or len(xs) == 1, label=label[:24])
-        set_chart_ticks(axes, list(zip(positions, labels)), font, 25 if len(points) > 5 else 0,
+        set_chart_ticks(axes, list(zip(positions, labels)), font, 25 if len(positions) > 5 else 0,
                         max_labels=10, label_length=20, fontsize=9)
-        _legend(axes, style, font)
+        chart_legend(axes, style, font)
         return figure_png(figure)
 
 
-def render_scatter_chart(payload):
+def render_stacked_area_chart(payload):
+    payload = chart_object(payload)
+    style = chart_object(payload.get("style", {}))
+    positions, labels, series = _cartesian_series(payload, style, 0)
+    if len(positions) < 2 or any(left >= right for left, right in zip(positions, positions[1:])):
+        raise ChartError("堆叠面积图需要至少两个按升序排列且互不重复的横轴值。")
+    names, values = zip(*series)
+    if any(value < 0 for row in values for value in row):
+        raise ChartError("堆叠面积图需要非负的聚合值。")
+
+    with render_lock:
+        figure, axes, font = _figure(style)
+        axes.stackplot(positions, *values, labels=[name[:24] for name in names],
+                       colors=chart_palette(style), alpha=0.8)
+        axes.set_ylim(bottom=0)
+        axes.margins(x=0)
+        set_chart_ticks(axes, list(zip(positions, labels)), font, max_labels=10, label_length=20, fontsize=9)
+        chart_legend(axes, style, font)
+        return figure_png(figure)
+
+
+def render_scatter_chart(payload, *, marginal=False):
     """按系列颜色绘制原始散点。"""
     payload = chart_object(payload)
     style = chart_object(payload.get("style", {}))
     appearance = scatter_style(style)
     x_type = style_choice(payload, "xType", ("number", "category", "date"), "number")
+    if marginal and x_type != "number":
+        raise ChartError("带边际直方图的散点图需要两个数值字段。")
     series = payload.get("series")
     if not isinstance(series, list) or not 1 <= len(series) <= MAX_SERIES:
         raise ChartError()
@@ -285,7 +294,7 @@ def render_scatter_chart(payload):
         for pair in samples:
             if not isinstance(pair, list) or len(pair) != 2:
                 raise ChartError()
-            coordinates.append((_number(pair[0]), _number(pair[1])))
+            coordinates.append((json_chart_number(pair[0]), json_chart_number(pair[1])))
         count += len(samples)
         groups.append({"label": chart_text(item, "label"), "samples": coordinates})
     ticks = []
@@ -295,14 +304,41 @@ def render_scatter_chart(payload):
             raise ChartError()
         for raw in points:
             point = chart_object(raw)
-            ticks.append((_number(point.get("x")), chart_text(point, "label")))
+            ticks.append((json_chart_number(point.get("x")), chart_text(point, "label")))
 
     with render_lock:
-        figure, axes, font = _figure(style)
-        palette = _palette(style)
+        figure, font = chart_figure(style, figsize=(9, 7) if marginal else (9, 5))
+        palette = chart_palette(style)
+        axes = _marginal_axes(figure, groups, palette, histogram_bins(style)) if marginal else figure.subplots()
+        style_cartesian_axes(axes, style, font)
         for index, group in enumerate(groups):
             draw_scatter_series(axes, group["samples"], appearance, palette[index % len(palette)], group["label"][:24])
         draw_scatter_guides(axes, groups, appearance, x_type, font)
         set_chart_ticks(axes, ticks, font, max_labels=10, label_length=20, fontsize=9)
-        _legend(axes, style, font)
+        chart_legend(axes, style, font)
         return figure_png(figure)
+
+
+def _marginal_axes(figure, groups, palette, bins):
+    from matplotlib.ticker import MaxNLocator
+
+    grid = figure.add_gridspec(2, 2, width_ratios=(4, 1), height_ratios=(1, 4))
+    scatter = figure.add_subplot(grid[1, 0])
+    top = figure.add_subplot(grid[0, 0], sharex=scatter)
+    right = figure.add_subplot(grid[1, 1], sharey=scatter)
+    top.tick_params(axis="x", labelbottom=False)
+    right.tick_params(axis="y", labelleft=False)
+    top.yaxis.set_major_locator(MaxNLocator(nbins=3, integer=True))
+    right.xaxis.set_major_locator(MaxNLocator(nbins=3, integer=True))
+
+    colors = [palette[index % len(palette)] for index in range(len(groups))]
+    coordinates = [tuple(zip(*group["samples"])) for group in groups]
+    x_groups, y_groups = zip(*coordinates)
+    for axes, samples, orientation in ((top, x_groups, "vertical"), (right, y_groups, "horizontal")):
+        edges = histogram_edges([value for sample in samples for value in sample], bins)
+        axes.hist(samples, bins=edges, orientation=orientation, stacked=True, color=colors, alpha=0.75)
+    return scatter
+
+
+def render_scatter_histogram_chart(payload):
+    return render_scatter_chart(payload, marginal=True)

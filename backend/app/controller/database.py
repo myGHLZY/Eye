@@ -5,7 +5,11 @@ from werkzeug.exceptions import RequestEntityTooLarge
 from app.database.database import DatabaseConfigurationError
 
 from app.service.bar_chart import BAR_RENDERER_REVISION, load_bar_data, render_bar_chart
-from app.service.cartesian_charts import load_line_data, load_scatter_data, render_line_chart, render_scatter_chart
+from app.service.bar_of_pie_chart import load_bar_of_pie_data, render_bar_of_pie_chart
+from app.service.cartesian_charts import (
+    load_line_data, load_scatter_data, load_scatter_histogram_data, load_stacked_area_data,
+    render_line_chart, render_scatter_chart, render_scatter_histogram_chart, render_stacked_area_chart,
+)
 from app.service.database_catalog import describe_chart_source, list_chart_sources
 from app.service.database_connection import (
     DatabaseConnectionError,
@@ -15,6 +19,9 @@ from app.service.database_connection import (
     get_connection_settings,
     list_database_connections,
     test_connection,
+)
+from app.service.distribution_charts import (
+    load_boxplot_data, load_histogram_data, render_boxplot_chart, render_histogram_chart,
 )
 from app.service.pie_chart import load_pie_data, render_pie_chart
 from app.service.heatmap_chart import load_heatmap_data, render_heatmap_chart
@@ -33,7 +40,13 @@ ADDITIONAL_CHARTS = {
     "line": (load_line_data, render_line_chart),
     "scatter": (load_scatter_data, render_scatter_chart),
     "heatmap": (load_heatmap_data, render_heatmap_chart),
+    "scatter-histogram": (load_scatter_histogram_data, render_scatter_histogram_chart),
+    "stacked-area": (load_stacked_area_data, render_stacked_area_chart),
+    "histogram": (load_histogram_data, render_histogram_chart),
+    "boxplot": (load_boxplot_data, render_boxplot_chart),
+    "bar-of-pie": (load_bar_of_pie_data, render_bar_of_pie_chart),
 }
+LARGE_CHARTS = {"scatter", "scatter-histogram", "boxplot"}
 
 
 @blueprint.before_request
@@ -188,14 +201,14 @@ def sankey_chart_render():
     return _chart_image(render_sankey_chart, "sankey-chart.png", "INVALID_SANKEY_CHART")
 
 
-@blueprint.post("/charts/<any(line,scatter,heatmap):kind>/<any(data,render):action>")
+@blueprint.post(f"/charts/<any({','.join(map(repr, ADDITIONAL_CHARTS))}):kind>/<any(data,render):action>")
 def additional_chart(kind, action):
-    """处理折线图、散点图和热力图的取数或渲染。"""
+    """通过统一入口读取数据或渲染 PNG。"""
     load, render = ADDITIONAL_CHARTS[kind]
-    error_code = f"INVALID_{kind.upper()}_CHART"
+    error_code = f"INVALID_{kind.upper().replace('-', '_')}_CHART"
     if action == "data":
         return _database_response(load, _read_json(32 * 1024), chart_error=error_code)
-    maximum = 384 * 1024 if kind == "scatter" else 96 * 1024
+    maximum = 384 * 1024 if kind in LARGE_CHARTS else 96 * 1024
     return _chart_image(render, f"{kind}-chart.png", error_code, maximum=maximum)
 
 

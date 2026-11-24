@@ -39,6 +39,11 @@
 | POST | [`/api/database/charts/sankey/render`](#api-specialty-charts) | 渲染桑基图 PNG |
 | POST | [`/api/database/charts/{line,scatter,heatmap}/data`](#api-additional-charts) | 查询折线、散点或热力图数据 |
 | POST | [`/api/database/charts/{line,scatter,heatmap}/render`](#api-additional-charts) | 渲染对应图表 PNG |
+| POST | [`/api/database/charts/scatter-histogram/{data,render}`](#api-scatter-histogram) | 查询散点记录、渲染带边际直方图的散点图 |
+| POST | [`/api/database/charts/stacked-area/{data,render}`](#api-stacked-area) | 查询横轴与系列聚合值、渲染堆叠面积图 |
+| POST | [`/api/database/charts/histogram/{data,render}`](#api-histogram) | 查询分箱频数、渲染直方图 |
+| POST | [`/api/database/charts/boxplot/{data,render}`](#api-boxplot) | 查询箱线统计、渲染箱线图 |
+| POST | [`/api/database/charts/bar-of-pie/{data,render}`](#api-bar-of-pie) | 查询主类别和子类别构成、渲染饼图与构成柱图 |
 | POST | [`/api/database/charts/subplot/render`](#api-subplot-chart) | 读取并渲染多子图组合 |
 
 <a name="api-health"></a>
@@ -540,6 +545,49 @@ PNG 响应带有 `X-Eye-Bar-Renderer: 4`。绘制显著性标注时，绘图区�
   "rowMax": 1986
 }
 ```
+
+## 分布与构成图表
+
+这些图表的 `data` 接口接受 JSON，公共字段 `connectionId` 和 `table` 分别指定已保存的连接和数据表或视图名。成功时以 `data` 包装结果。把结果对象与可选的 `style` 一起传给对应的 `render` 接口即可生成 `image/png`。渲染时可以切换配色或显示选项，无需重新查询数据库。
+
+共用样式包括 `title`（最多 60 字符）和 `colors`（Matplotlib 颜色字符串数组）。有横纵坐标的图还支持 `xLabel`、`yLabel` 和 `showGrid`，其中轴名最多 60 字符。取数请求体上限为 32 KiB。边际散点图和箱线图的渲染请求体上限为 384 KiB，其余三种为 96 KiB。参数或数据不符合要求时返回 HTTP 400，错误码为 `INVALID_<图表类型>_CHART`，如 `INVALID_STACKED_AREA_CHART`。请求体超限时返回 HTTP 413。
+
+<a name="api-scatter-histogram"></a>
+
+### 带边际直方图的散点图
+
+- `POST /api/database/charts/scatter-histogram/data` 接收 `categoryColumn`（横轴数值列）、`valueColumn`（纵轴数值列）、可选的 `groupColumn` 和 `maxPoints`（1 至 500，默认 500）。返回与散点图格式相同的 `series[].samples`、轴名和 `truncated`，有数据时 `xType` 为 `number`。横纵轴任一值为空的记录将被跳过。
+- `POST /api/database/charts/scatter-histogram/render` 使用散点图原有的标记、拟合和图例样式，另接受 `style.bins`（5 至 80，默认 20）。顶部和右侧分别显示已绘制点的横轴、纵轴分布。同一坐标轴上的分组共用分箱边界并按频数堆叠。[Matplotlib 示例](https://matplotlib.org/stable/gallery/lines_bars_and_markers/scatter_hist.html)
+
+<a name="api-stacked-area"></a>
+
+### 堆叠面积图
+
+- `POST /api/database/charts/stacked-area/data` 接收 `categoryColumn`、可选的 `groupColumn`、`aggregation`（`sum`、`average`、`count`、`max` 或 `min`）和 `valueColumn`（使用 `count` 时可省略）。返回与聚合折线图相同的 `points`、`series`、`seriesName`、`xType` 和 `truncated`。最多展示 96 个横轴值和 8 个系列。
+- `POST /api/database/charts/stacked-area/render` 需要至少两个互不重复且升序排列的横轴坐标。日期和数值横轴保留实际间距，类别横轴等距排列。聚合值须非负，缺失的系列组合按 0 绘制。可用 `style.showLegend` 开关图例。[Matplotlib 示例](https://matplotlib.org/stable/gallery/lines_bars_and_markers/stackplot_demo.html)
+
+<a name="api-histogram"></a>
+
+### 直方图
+
+- `POST /api/database/charts/histogram/data` 接收 `valueColumn` 和可选的 `bins`（5 至 80，默认 20）。返回 `xLabel`、分箱边界 `edges` 和对应频数 `counts`。区间左闭右开，最后一个区间包含右端点。数值精度导致边界重合时合并重合边界。没有有效样本时两个数组均为空。
+- `POST /api/database/charts/histogram/render` 接收 `edges` 和 `counts`，两者长度相差 1。默认按频数绘制，`style.histogramPercent: true` 时显示每箱占全部样本的百分比。[Matplotlib 示例](https://matplotlib.org/stable/gallery/statistics/hist.html)
+
+<a name="api-boxplot"></a>
+
+### 箱线图
+
+- `POST /api/database/charts/boxplot/data` 接收 `valueColumn` 和可选的 `groupColumn`，最多 12 组。返回 `xLabel`、`yLabel` 和 `boxes`，每项包含 `label`、`count`、`whislo`、`q1`、`med`、`q3`、`whishi` 和 `fliers`。以 1.5 倍四分位距确定离群范围，须端及四分位数使用 Matplotlib 的箱线统计。
+- `POST /api/database/charts/boxplot/render` 接收 `boxes`。通过 `style.showFliers: false` 可隐藏离群点，返回的数据统计仍保留这些点。[Matplotlib 示例](https://matplotlib.org/stable/gallery/statistics/boxplot_demo.html)
+
+直方图和箱线图均统计最多 10,000 条有效记录，超限时返回提示，可先通过视图筛选。数值为空的行将被跳过。箱线图指定分组字段时，分组值为空的行也会跳过。
+
+<a name="api-bar-of-pie"></a>
+
+### 饼图与构成柱图
+
+- `POST /api/database/charts/bar-of-pie/data` 接收 `categoryColumn`（主类别）、`groupColumn`（子类别）、`aggregation`（`sum` 或 `count`）和 `valueColumn`（使用 `count` 时可省略）。返回 `seriesName`、默认展开的 `detailKey` 和 `points`。每个主类别含 `key`、`label`、`value` 和 `parts`，子类别含 `label` 和 `value`。汇总值须非负，图中省略为 0 的项。最多 12 个主类别，每个主类别最多 12 个子类别。
+- `POST /api/database/charts/bar-of-pie/render` 接收 `points`，可通过 `detailKey` 切换展开的主类别，缺省时展开第一项。构成柱按扇区内占比堆叠为 100%，子类别数值之和须与该扇区一致。[Matplotlib 示例](https://matplotlib.org/stable/gallery/pie_and_polar_charts/bar_of_pie.html)
 
 <a name="api-subplot-chart"></a>
 

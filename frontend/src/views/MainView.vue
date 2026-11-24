@@ -299,9 +299,15 @@ export const mainRoutes = [
   },
   {
     name: 'cartesian-chart-editor',
-    path: 'visualization/cartesian-chart/:chartId(simple_plot|scatter_with_legend)',
+    path: 'visualization/cartesian-chart/:chartId(simple_plot|scatter_with_legend|scatter_hist|stackplot_demo)',
     component: () => import('./SpecialChartEditorView.vue'),
     meta: { title: '制作图表', section: '可视化', activeMenu: 'chart-types' },
+  },
+  {
+    name: 'chart-editor',
+    path: 'visualization/chart-editor/:chartId(hist|boxplot_demo|bar_of_pie)',
+    component: () => import('./SpecialChartEditorView.vue'),
+    meta: { title: '制作图表', section: '可视化', activeMenu: 'statistics-charts' },
   },
   {
     name: 'subplot-chart-editor',
@@ -337,7 +343,7 @@ export default {
   },
   computed: {
     dataChartEditorRoute() {
-      return ['special-chart-editor', 'cartesian-chart-editor', 'subplot-chart-editor'].includes(this.$route.name)
+      return ['special-chart-editor', 'cartesian-chart-editor', 'chart-editor', 'subplot-chart-editor'].includes(this.$route.name)
     },
     databaseSchemaRoute() {
       return this.$route.name === 'database-schema'

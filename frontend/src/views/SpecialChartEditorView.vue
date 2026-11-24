@@ -12,8 +12,21 @@
           </label>
           <chart-data-picker v-model="selection" :aggregations="aggregations"
             :category-label="config.categoryLabel" :group-label="config.groupLabel"
+            :sample-mode="sampleMode" :numeric-category="kind === 'scatter-histogram'"
             :group-mode="wideHeatmap ? 'none' : config.groupMode" :wide-metrics="wideHeatmap"
-            :value-label="kind === 'scatter' ? '纵轴数值' : '数值字段'" :raw-points="kind === 'scatter'" />
+            :value-label="isScatter ? '纵轴数值' : sampleMode ? '样本数值字段' : '数值字段'" :raw-points="isScatter" />
+          <label v-if="hasBins" class="field">分箱数量
+            <select v-model.number="bins">
+              <option v-for="count in binOptions" :key="count" :value="count">{{ count }}</option>
+            </select>
+          </label>
+          <label v-if="selectedPie" class="field">展开扇区
+            <select :value="selectedPie.key" @change="pieDetailKey = $event.target.value">
+              <option v-for="point in dataset.points" :key="point.key" :value="point.key">
+                {{ point.label || '空字符串' }}
+              </option>
+            </select>
+          </label>
           <button v-if="selection" type="button" :disabled="loading" @click="loadData">刷新数据</button>
         </template>
         <template #style>
@@ -30,13 +43,22 @@
             <label class="check"><input v-model="showFlowValues" type="checkbox"> 在流带上显示流量</label>
           </template>
           <label v-if="kind === 'line'" class="check"><input v-model="showMarkers" type="checkbox"> 显示数据点</label>
-          <template v-if="kind === 'scatter'">
+          <template v-if="isScatter">
             <label class="field">横轴名称<input v-model.trim="scatterXLabel" type="text" maxlength="60" :placeholder="dataset?.xLabel"></label>
             <label class="field">纵轴名称<input v-model.trim="scatterYLabel" type="text" maxlength="60" :placeholder="dataset?.yLabel"></label>
             <label class="check"><input v-model="scatterShowGrid" type="checkbox"> 显示网格</label>
             <label class="check"><input v-model="scatterShowLegend" type="checkbox"> 显示图例</label>
             <scatter-style-fields :settings="scatter" guides />
           </template>
+          <label v-if="kind === 'histogram'" class="field">纵轴统计
+            <select v-model="histogramPercent">
+              <option :value="false">频数</option>
+              <option :value="true">百分比</option>
+            </select>
+          </label>
+          <label v-if="kind === 'boxplot'" class="check">
+            <input v-model="showFliers" type="checkbox"> 显示离群点
+          </label>
           <template v-if="kind === 'heatmap'">
             <label class="field">热力配色
               <select v-model="colorMap">
@@ -93,13 +115,20 @@ import { chartPalettes } from '../data/chartPalettes.js'
 import { createScatterStyle } from '../data/scatterStyle.js'
 
 const format = new Intl.NumberFormat('zh-CN', { maximumSignificantDigits: 8 })
+const percent = new Intl.NumberFormat('zh-CN', { style: 'percent', maximumFractionDigits: 2 })
 const baseAggregations = ['sum', 'average', 'count', 'max', 'min', 'raw']
 const wideAggregations = ['raw', 'sum', 'average', 'max', 'min']
+const binOptions = [5, 10, 15, 20, 30, 40, 50, 80]
 const chartEditors = {
   radar_chart: { kind: 'radar', title: '雷达图', categoryLabel: '指标字段', groupLabel: '系列字段', groupMode: 'optional', dataHeading: '指标数据' },
   sankey_basics: { kind: 'sankey', title: '桑基图', categoryLabel: '来源字段', groupLabel: '目标字段', groupMode: 'required', dataHeading: '流量数据' },
   simple_plot: { kind: 'line', title: '折线图', categoryLabel: '横轴字段', groupLabel: '系列字段', groupMode: 'optional', dataHeading: '折线数据' },
   scatter_with_legend: { kind: 'scatter', title: '散点图', categoryLabel: '横轴字段', groupLabel: '分组字段（可选）', groupMode: 'optional', dataHeading: '散点数据' },
+  scatter_hist: { kind: 'scatter-histogram', title: '带边际直方图的散点图', categoryLabel: '横轴数值', groupLabel: '分组字段（可选）', groupMode: 'optional', dataHeading: '散点数据' },
+  stackplot_demo: { kind: 'stacked-area', title: '堆叠面积图', categoryLabel: '横轴字段', groupLabel: '系列字段', groupMode: 'optional', dataHeading: '面积数据' },
+  hist: { kind: 'histogram', title: '直方图', groupMode: 'none', dataHeading: '分箱数据' },
+  boxplot_demo: { kind: 'boxplot', title: '箱线图', groupLabel: '分组字段（可选）', groupMode: 'optional', dataHeading: '箱线统计' },
+  bar_of_pie: { kind: 'bar-of-pie', title: '饼图与构成柱图', categoryLabel: '主类别字段', groupLabel: '子类别字段', groupMode: 'required', dataHeading: '所选扇区构成' },
   specialty_heatmap: { kind: 'heatmap', title: '热力图', categoryLabel: '行字段', groupLabel: '列字段', groupMode: 'required', dataHeading: '矩阵数据' },
 }
 
@@ -115,6 +144,7 @@ export default {
       showMarkers: true, colorMap: 'Blues', showValues: true,
       scatter: createScatterStyle(), scatterXLabel: '', scatterYLabel: '',
       scatterShowGrid: true, scatterShowLegend: true,
+      binOptions, bins: 20, histogramPercent: false, showFliers: true, pieDetailKey: '',
       dataError: '', previewError: '',
     }
   },
@@ -122,14 +152,28 @@ export default {
     config() { return chartEditors[this.$route.params.chartId] },
     kind() { return this.config.kind },
     isRadar() { return this.kind === 'radar' },
+    isScatter() { return this.kind === 'scatter' || this.kind === 'scatter-histogram' },
+    sampleMode() { return this.kind === 'histogram' || this.kind === 'boxplot' },
+    hasBins() { return this.kind === 'histogram' || this.kind === 'scatter-histogram' },
     wideHeatmap() { return this.kind === 'heatmap' && this.heatmapLayout === 'wide' },
     aggregations() {
       if (this.wideHeatmap) return wideAggregations
+      if (this.kind === 'stacked-area') return baseAggregations.filter(mode => mode !== 'raw')
+      if (this.kind === 'bar-of-pie') return ['sum', 'count']
       return ['line', 'heatmap'].includes(this.kind) ? baseAggregations : ['sum', 'count', 'raw']
+    },
+    dataSelection() {
+      if (this.kind === 'histogram' && this.selection) return { ...this.selection, bins: this.bins }
+      return this.selection
+    },
+    selectedPie() {
+      if (this.kind !== 'bar-of-pie' || !this.dataset) return null
+      return this.dataset.points.find(point => point.key === this.pieDetailKey) || this.dataset.points[0]
     },
     automaticTitle() {
       if (!this.dataset || !this.selection) return this.config.title
-      if (this.kind === 'scatter') return `${this.selection.categoryColumn} · ${this.selection.valueColumn}`
+      if (this.isScatter) return `${this.selection.categoryColumn} · ${this.selection.valueColumn}`
+      if (this.sampleMode) return [this.selection.valueColumn, this.selection.groupColumn].filter(Boolean).join(' · ')
       if (this.selection.layout === 'wide') return `${this.selection.table} · ${this.selection.categoryColumn} · ${this.dataset.seriesName}`
       const { categoryColumn, groupColumn } = this.selection
       return groupColumn ? `${categoryColumn} · ${groupColumn} · ${this.dataset.seriesName}` : `${categoryColumn} · ${this.dataset.seriesName}`
@@ -138,16 +182,19 @@ export default {
     groupedScatter() { return Boolean(this.selection?.groupColumn) },
     headings() {
       if (this.kind === 'sankey') return ['来源', '目标', '流量']
-      if (this.kind === 'scatter') return [
+      if (this.isScatter) return [
         ...(this.groupedScatter ? ['分组'] : []), this.dataset?.xLabel, this.dataset?.yLabel,
       ]
+      if (this.kind === 'histogram') return ['分箱区间', '频数', '占比']
+      if (this.kind === 'boxplot') return ['分组', '样本数', '下须', 'Q1', '中位数', 'Q3', '上须', '离群点数']
+      if (this.kind === 'bar-of-pie') return ['子类别', '数值', '扇区内占比']
       if (this.kind === 'heatmap') return ['行 / 列', ...(this.dataset?.columns || [])]
       return [this.isRadar ? '指标' : '横轴', ...(this.series.length ? this.series.map(item => item.label) : ['数值'])]
     },
     rows() {
       if (!this.dataset) return []
       if (this.kind === 'sankey') return this.dataset.flows.map(flow => [flow.source, flow.target, format.format(flow.value)])
-      if (this.kind === 'scatter') {
+      if (this.isScatter) {
         const labels = new Map((this.dataset.points || []).map(point => [point.x, point.label]))
         return this.series.flatMap(group => group.samples.map(([x, y]) => [
           ...(this.groupedScatter ? [group.label] : []), labels.get(x) ?? format.format(x), format.format(y),
@@ -156,50 +203,82 @@ export default {
       if (this.kind === 'heatmap') return this.dataset.rows.map((row, index) => [
         row, ...this.dataset.values[index].map(value => value == null ? '—' : format.format(value)),
       ])
+      if (this.kind === 'histogram') {
+        const { counts, edges } = this.dataset
+        const total = counts.reduce((sum, count) => sum + count, 0)
+        return counts.map((count, index) => [
+          `[${format.format(edges[index])}, ${format.format(edges[index + 1])}${index === counts.length - 1 ? ']' : ')'}`,
+          format.format(count), percent.format(count / total),
+        ])
+      }
+      if (this.kind === 'boxplot') return this.dataset.boxes.map(box => [
+        box.label, ...[box.count, box.whislo, box.q1, box.med, box.q3, box.whishi, box.fliers.length]
+          .map(value => format.format(value)),
+      ])
+      if (this.kind === 'bar-of-pie') {
+        return this.selectedPie?.parts.map(part => [
+          part.label || '空字符串', format.format(part.value), percent.format(part.value / this.selectedPie.value),
+        ]) || []
+      }
       return this.dataset.points.map((point, index) => [
         point.label,
         ...(this.series.length
-          ? this.series.map(item => item.values[index] == null ? '—' : format.format(item.values[index]))
+          ? this.series.map(item => item.values[index] == null && this.kind !== 'stacked-area'
+            ? '—' : format.format(item.values[index] ?? 0))
           : [format.format(point.value)]),
       ])
     },
+    axisLabels() {
+      if (this.kind === 'histogram') return [this.dataset.xLabel, this.histogramPercent ? '百分比' : '频数']
+      if (this.kind === 'boxplot') return [this.dataset.xLabel, this.dataset.yLabel]
+      if (this.isScatter) return [
+        this.scatterXLabel || this.selection.categoryColumn, this.scatterYLabel || this.selection.valueColumn,
+      ]
+      if (this.kind === 'heatmap') return [
+        this.wideHeatmap ? '数值列' : this.selection.groupColumn, this.selection.categoryColumn,
+      ]
+      return [this.selection.categoryColumn, this.dataset.seriesName]
+    },
     renderPayload() {
       if (!this.dataset || (!this.isRadar && !this.rows.length) || (this.isRadar && this.rows.length < 3)) return null
+      if (this.kind === 'stacked-area' && this.rows.length < 2) return null
       const palette = this.palettes.find(item => item.id === this.paletteId)
+      const [xLabel, yLabel] = this.axisLabels
       return {
         ...this.dataset,
+        ...(this.selectedPie ? { detailKey: this.selectedPie.key } : {}),
         style: {
           colors: palette.colors, title: this.title || this.automaticTitle.slice(0, 60),
           legendLabel: this.dataset.seriesName, fill: this.fill, flowOpacity: this.flowOpacity,
           ...(this.kind === 'sankey' ? { showFlowValues: this.showFlowValues } : {}),
           showMarkers: this.showMarkers, colorMap: this.colorMap, showValues: this.showValues,
           ...(this.kind === 'heatmap' ? { dpi: this.heatmapDpi } : {}),
-          xLabel: (this.selection.layout === 'wide' ? '数值列'
-            : this.kind === 'heatmap' ? this.selection.groupColumn : this.selection.categoryColumn).slice(0, 60),
-          yLabel: (this.kind === 'heatmap' ? this.selection.categoryColumn
-            : this.kind === 'scatter' ? this.selection.valueColumn : this.dataset.seriesName).slice(0, 60),
-          ...(this.kind === 'scatter' ? {
+          xLabel: xLabel.slice(0, 60), yLabel: yLabel.slice(0, 60),
+          ...(this.isScatter ? {
             ...this.scatter,
             showGrid: this.scatterShowGrid, showLegend: this.scatterShowLegend,
-            xLabel: this.scatterXLabel || this.selection.categoryColumn.slice(0, 60),
-            yLabel: this.scatterYLabel || this.selection.valueColumn.slice(0, 60),
           } : {}),
+          ...(this.kind === 'scatter-histogram' ? { bins: this.bins } : {}),
+          ...(this.kind === 'histogram' ? { histogramPercent: this.histogramPercent } : {}),
+          ...(this.kind === 'boxplot' ? { showFliers: this.showFliers } : {}),
         },
       }
     },
     emptyMessage() {
       if (!this.dataset) return '选择数据库、表和字段以生成图表。'
       if (this.isRadar) return '雷达图至少需要三个指标分类。'
+      if (this.kind === 'stacked-area') return '堆叠面积图至少需要两个横轴值。'
       return this.kind === 'sankey' ? '当前数据没有可绘制的正流量。' : '当前字段组合没有可绘制的数据。'
     },
   },
   watch: {
-    selection() {
+    dataSelection() {
       this._dataRequest?.abort()
       this._dataRequest = null
       this.dataset = null
       this.loading = false
       this.dataError = ''
+      this.pieDetailKey = ''
       this.clearImage()
       this.loadData()
     },
@@ -223,14 +302,14 @@ export default {
   methods: {
     async loadData() {
       // Keep only the latest selection's result.
-      if (!this.selection) return
+      if (!this.dataSelection) return
       this._dataRequest?.abort()
       const request = new AbortController()
       this._dataRequest = request
       this.loading = true
       this.dataError = ''
       try {
-        const dataset = await fetchChartData(this.kind, this.selection, request.signal)
+        const dataset = await fetchChartData(this.kind, this.dataSelection, request.signal)
         if (this._dataRequest === request) this.dataset = dataset
       } catch (error) {
         if (this._dataRequest === request && error.name !== 'AbortError') this.dataError = error.message

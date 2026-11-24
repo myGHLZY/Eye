@@ -7,6 +7,11 @@ export const chartEditorRoutes = {
   specialty_heatmap: 'special-chart-editor',
   simple_plot: 'cartesian-chart-editor',
   scatter_with_legend: 'cartesian-chart-editor',
+  scatter_hist: 'cartesian-chart-editor',
+  stackplot_demo: 'cartesian-chart-editor',
+  hist: 'chart-editor',
+  boxplot_demo: 'chart-editor',
+  bar_of_pie: 'chart-editor',
   subplot: 'subplot-chart-editor',
   subplot_overlay: 'subplot-chart-editor',
 }

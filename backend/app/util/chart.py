@@ -45,6 +45,13 @@ def chart_number(value) -> float:
     return number
 
 
+def json_chart_number(value) -> float:
+    """读取 JSON 数值，排除字符串和布尔值。"""
+    if type(value) not in (int, float):
+        raise ChartError()
+    return chart_number(value)
+
+
 def chart_points(payload: dict, limit: int) -> list[tuple[str, float]]:
     """按传入顺序读取标签与数值，并限制预览的分类数。"""
     raw_points = payload.get("points")
@@ -53,10 +60,7 @@ def chart_points(payload: dict, limit: int) -> list[tuple[str, float]]:
     points = []
     for raw in raw_points:
         point = chart_object(raw)
-        value = point.get("value")
-        if type(value) not in (int, float):
-            raise ChartError()
-        points.append((chart_text(point, "label"), chart_number(value)))
+        points.append((chart_text(point, "label"), json_chart_number(point.get("value"))))
     return points
 
 
@@ -99,6 +103,42 @@ def chart_font():
     candidates.extend(("/System/Library/Fonts/STHeiti Medium.ttc", "/System/Library/Fonts/Supplemental/Songti.ttc"))
     path = next((candidate for candidate in candidates if Path(candidate).is_file()), None)
     return FontProperties(fname=path)
+
+
+def chart_figure(style, *, figsize=(9, 5)):
+    """创建有中文标题的 PNG 画布。"""
+    from matplotlib.figure import Figure
+
+    font = chart_font()
+    figure = Figure(figsize=figsize, dpi=130, layout="constrained", facecolor="#ffffff")
+    figure.suptitle(chart_text(style, "title", maximum=60), fontproperties=font, parse_math=False)
+    return figure, font
+
+
+def style_cartesian_axes(axes, style, font):
+    for method, key in ((axes.set_xlabel, "xLabel"), (axes.set_ylabel, "yLabel")):
+        method(chart_text(style, key, maximum=60), fontproperties=font, parse_math=False)
+    axes.set_axisbelow(True)
+    if style_flag(style, "showGrid", True):
+        axes.grid(color="#e5edf6", linewidth=0.7)
+
+
+def chart_palette(style):
+    from matplotlib.colors import is_color_like
+
+    colors = style.get("colors", [])
+    if not isinstance(colors, list) or any(not isinstance(color, str) or not is_color_like(color) for color in colors):
+        raise ChartError()
+    return colors or [f"C{index}" for index in range(8)]
+
+
+def chart_legend(axes, style, font):
+    """把系列名按普通文本显示。"""
+    handles, names = axes.get_legend_handles_labels()
+    if handles and style_flag(style, "showLegend", True):
+        legend = axes.legend(handles, names, prop=font, frameon=False)
+        for label in legend.get_texts():
+            label.set_parse_math(False)
 
 
 def figure_png(figure) -> BytesIO:

@@ -24,7 +24,7 @@
         </select>
       </label>
       <p v-if="connectionId && !loading && !error && !hasSources">这个数据库没有可读取的数据表或视图。</p>
-      <label>
+      <label v-if="!sampleMode">
         {{ categoryLabel }}
         <select v-model="categoryColumn" :disabled="!columns.length || Boolean(loading)">
           <option value="">{{ loading === 'columns' ? '正在读取字段…' : '请选择' + categoryLabel }}</option>
@@ -36,13 +36,13 @@
       <label v-if="groupMode !== 'none'">
         {{ groupLabel }}
         <select v-model="groupColumn" :disabled="!columns.length || Boolean(loading)">
-          <option value="">{{ groupMode === 'required' ? '请选择字段' : rawPoints ? '不分组' : '不分系列' }}</option>
+          <option value="">{{ groupMode === 'required' ? '请选择字段' : rawValues ? '不分组' : '不分系列' }}</option>
           <option v-for="column in groupColumns" :key="column.name" :value="column.name">
             {{ column.name }} · {{ column.type }}
           </option>
         </select>
       </label>
-      <label v-if="!rawPoints">
+      <label v-if="!rawValues">
         聚合方式
         <select v-model="aggregation">
           <option v-for="mode in aggregations" :key="mode" :value="mode">{{ aggregationLabels[mode] }}</option>
@@ -72,7 +72,7 @@
           <label>行范围终点<input v-model.number="rowMax" type="number" step="any" placeholder="不限"></label>
         </div>
       </template>
-      <label v-else-if="rawPoints || aggregation !== 'count'">
+      <label v-else-if="rawValues || aggregation !== 'count'">
         {{ valueLabel }}
         <select v-model="valueColumn" :disabled="!numericColumns.length || Boolean(loading)">
           <option value="">请选择数值字段</option>
@@ -95,7 +95,8 @@
         </select>
       </label>
       <p v-if="wideMetrics && categoryColumn && !valueColumns.length && !availableMetrics.length">此表没有可选的数值列。</p>
-      <p v-else-if="!wideMetrics && !rawPoints && columns.length && aggregation !== 'count' && !numericColumns.length">
+      <p v-else-if="sampleMode && columns.length && !numericColumns.length">此表没有可选的数值字段。</p>
+      <p v-else-if="!wideMetrics && !rawValues && columns.length && aggregation !== 'count' && !numericColumns.length">
         此表可以按记录数统计。
       </p>
       <p v-else-if="aggregation === 'share' && numericColumns.length">
@@ -128,6 +129,8 @@ export default {
     valueLabel: { type: String, default: '数值字段' },
     secondaryLabel: { type: String, default: '' },
     rawPoints: Boolean,
+    sampleMode: Boolean,
+    numericCategory: Boolean,
     wideMetrics: Boolean,
   },
   data() {
@@ -141,9 +144,10 @@ export default {
   },
   computed: {
     hasSources() { return Boolean(this.tables.length || this.views.length) },
+    rawValues() { return this.rawPoints || this.sampleMode },
     selectedGroup() {
       return this.groupMode !== 'none' && this.groupColumn !== this.categoryColumn &&
-        (!this.rawPoints || this.groupColumn !== this.valueColumn) ? this.groupColumn : ''
+        (!this.rawValues || this.groupColumn !== this.valueColumn) ? this.groupColumn : ''
     },
     numericColumns() {
       return this.columns.filter(column => numericType.test(column.type))
@@ -155,16 +159,22 @@ export default {
       return this.numericColumns.filter(column => column.name !== this.categoryColumn && !this.valueColumns.includes(column.name))
     },
     categoryColumns() {
+      if (this.numericCategory) return this.numericColumns
       return this.columns.filter(column => categoryType.test(column.type) || numericType.test(column.type))
     },
     groupColumns() {
       return this.columns.filter(column => column.name !== this.categoryColumn &&
-        (!this.rawPoints || column.name !== this.valueColumn) &&
+        (!this.rawValues || column.name !== this.valueColumn) &&
         (categoryType.test(column.type) || numericType.test(column.type)))
     },
     selection() {
       const { connectionId, table, categoryColumn, aggregation, valueColumn } = this
-      if (this.loading || !connectionId || !table || !categoryColumn || !this.aggregations.includes(aggregation)) return null
+      if (this.loading || !connectionId || !table) return null
+      if (this.sampleMode) {
+        if (!valueColumn) return null
+        return { connectionId, table, valueColumn, ...(this.selectedGroup ? { groupColumn: this.selectedGroup } : {}) }
+      }
+      if (!categoryColumn || !this.aggregations.includes(aggregation)) return null
       if (this.wideMetrics) {
         if (!this.valueColumns.length) return null
         return {
@@ -199,7 +209,7 @@ export default {
       this.rowMin = this.rowMax = ''
     },
     valueColumn(value) {
-      if (this.rawPoints && value === this.groupColumn) this.groupColumn = ''
+      if (this.rawValues && value === this.groupColumn) this.groupColumn = ''
       if (value === this.secondaryValueColumn) this.secondaryValueColumn = ''
     },
     selection(value) { this.$emit('input', value) },
