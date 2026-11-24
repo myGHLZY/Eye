@@ -1,6 +1,6 @@
 <template>
   <section aria-labelledby="page-title">
-    <p class="gallery-description">彩色图例已支持制作。点击图例打开对应页面。</p>
+    <p v-if="!completedOnly" class="gallery-description">彩色图例已支持制作。点击图例打开对应页面。</p>
 
     <div class="gallery-grid">
       <router-link
@@ -26,11 +26,14 @@ import '../assets/chart-preview.css'
 export default {
   name: 'ChartGallery',
   props: {
-    category: { type: String, required: true },
+    category: { type: String, default: '' },
+    completedOnly: Boolean,
   },
   computed: {
     charts() {
-      return chartExamples.filter(chart => chart.category === this.category)
+      return chartExamples.filter(chart =>
+        (!this.category || chart.category === this.category) && (!this.completedOnly || chart.editorRoute),
+      )
         .sort((left, right) => Number(Boolean(right.editorRoute)) - Number(Boolean(left.editorRoute)))
     },
   },

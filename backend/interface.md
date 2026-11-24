@@ -18,6 +18,12 @@
 | PUT | [`/api/database/connection`](#api-database-connection-save) | 保存并应用 MySQL 连接 |
 | GET | [`/api/database/tables`](#api-database-tables) | 查询当前库的表名列表 |
 | GET | [`/api/database/tables/detail?name=harvests`](#api-database-table-detail) | 查询指定表的结构和直接关系 |
+| GET | [`/api/database/sources`](#api-database-views) | 列出可用于绘图的数据表和视图 |
+| GET | [`/api/database/sources/detail`](#api-database-views) | 查询数据源的字段名称和类型 |
+| POST | [`/api/database/views/preview`](#api-database-views) | 生成定义并预览可视化查询 |
+| POST | [`/api/database/views/categories`](#api-database-views) | 读取转宽表可用的类别值 |
+| POST | [`/api/database/views`](#api-database-views) | 确认后创建视图 |
+| GET | [`/api/database/views/rows`](#api-database-views) | 预览已保存视图 |
 | GET | [`/api/database/tables/rows`](#api-database-table-rows) | 分页读取表记录，支持按字段精确筛选 |
 | POST | [`/api/database/tables/rows`](#api-database-table-rows) | 新增一条记录 |
 | PATCH | [`/api/database/tables/rows`](#api-database-table-rows) | 按原始主键更新一条记录 |
@@ -456,6 +462,43 @@ PNG 响应带有 `X-Eye-Bar-Renderer: 4`。绘制显著性标注时，绘图区�
 
 小于 3.5% 的扇区省略片内标签，工作台数据表仍可查看数值和占比。参数错误返回 HTTP 400 和 `INVALID_PIE_CHART`。请求体上限为 32 KiB。取数接口沿用表结构接口的连接和数据表错误响应。
 
+<a name="api-database-views"></a>
+
+## 视图与可视化数据源
+
+`GET /api/database/sources?connectionId=...` 返回 `tables`、`views` 数组。`GET /api/database/sources/detail?connectionId=...&name=...` 返回 `columns`，每列有 `name`、`type`。各图表接口在原有 `table` 参数中也可以接收视图名称。
+
+`POST /api/database/views/preview` 接收 `connectionId`、`spec` 和可选的 `drafts`。可视化步骤返回生成的 `query`、`columns`、`rows`（最多 20 行）、`truncated`。SQL 编辑仅返回待保存的查询定义，MySQL 在实际创建时校验。
+
+| 构建方式 | `spec` 字段 |
+| --- | --- |
+| SQL | `mode: "sql"`，`sql` 是一条 SELECT 或 WITH 查询。 |
+| 两表连接 | `mode: "join"`，`left`、`right` 指定来源，`joinType` 为 `inner` 或 `left`。`conditions` 为 `{left,right}` 字段对数组，按 AND 匹配；`columns` 为 `{side,name,alias}` 输出字段数组。 |
+| 长表转宽表 | `mode: "pivot"`，`source` 指定来源，`row` 是行字段，`category` 是列类别字段，`metric` 是数值字段。`aggregation` 支持 `sum`、`average`、`max`、`min`、`count`，记录数可省略 `metric`。`columns` 为 `{value,alias}` 数组，最多 16 列。 |
+| 筛选行 | `mode: "filter"`，`source` 指定来源，`match` 为 `all` 或 `any`，`conditions` 为 `{field,operator,value}` 数组。运算符支持 `eq`、`ne`、`gt`、`gte`、`lt`、`lte`、`contains`、`isNull`、`notNull`。空值判断可省略 `value`。 |
+| 选择与重命名字段 | `mode: "project"`，`source` 指定来源，`columns` 是按输出顺序排列的 `{name,alias}` 数组。 |
+| 计算新列 | `mode: "compute"`，`source`、`alias` 分别是来源和新列名。`inputMode: "fields"` 使用 `operands`（2 至 32 项），每项包含 `kind`（`field` 或 `number`）、`value`，第二项起还需 `operator`（`add`、`subtract`、`multiply`、`divide`）。`inputMode: "formula"` 使用 `expression`，支持数值字段、数字、括号和四则运算。 |
+| 分箱 | `mode: "bin"`，提供 `source`、`field`、`alias` 和递增的 `boundaries`。分界值属于从该值开始的区间，空值仍为空。 |
+| 宽表转长表 | `mode: "unpivot"`，提供 `source`、保留字段数组 `keys`，以及展开字段数组 `columns: [{name,alias}]`。`alias` 是生成的类别值，`categoryAlias` 与 `valueAlias` 指定新列名。 |
+| 去重或保留最新 | `mode: "dedupe"`，`source` 与 `method: "distinct"` 可移除完全重复的行。使用 `method: "latest"` 时，还要传分组字段 `keys` 和排序字段 `order`，可选 `tie` 决定排序相同时保留哪条。 |
+| 排名与累计 | `mode: "window"`，`scope: "group"` 先按 `keys` 分组，每组一行。`aggregation` 支持 `sum`、`average`、`count`、`min`、`max`，结果列名用 `summaryAlias`，除记录数外需提供 `metric`。 |
+
+计算新列的旧协议仍接受 `left`、`right`（均为 `{kind,value}`）和 `operator`。公式中含空格或特殊字符的字段名用反引号包裹。
+
+按组汇总可选 `operation: "summary"` 仅输出分组与汇总值，也可用 `rank`、`denseRank`、`runningSum`、`runningCount` 对汇总行继续计算。后四种方式使用 `alias` 指定计算结果列，使用 `direction` 指定方向。`order` 可用分组字段，留空时按汇总值排序。`partitionKeys` 可从分组字段中选择，用来分别计算。这里的 `runningCount` 累计的是汇总后的组数。
+
+`scope: "detail"`（省略 `scope` 时的旧协议）保留明细行。`keys` 为窗口分区字段，可为空数组，`order` 为排序字段，`direction` 为 `asc` 或 `desc`，`alias` 为结果列名。累计合计需要 `metric`，累计可指定 `tie`。
+
+来源使用 `db:名称` 指向数据库中的表或视图，使用 `draft:标识` 指向中间表。中间表定义通过 `drafts: [{id,spec}]` 随请求传入。工作台本地保留这些配置，最终创建时将依赖查询一并嵌入视图定义。
+
+`POST /api/database/views/categories` 接收 `connectionId`、`source`、`column`、`drafts`，返回 `values`（最多 80 个）和 `truncated`。
+
+`POST /api/database/views` 在预览参数基础上增加 `name` 和 `confirmed: true`。创建成功返回 HTTP 201 和视图名称、查询定义。同名时返回 HTTP 409。创建使用 `SQL SECURITY INVOKER`。
+
+`GET /api/database/views/rows?connectionId=...&name=...` 返回已保存视图的 `columns`、`rows`（最多 20 行）和 `truncated`。
+
+图表取数的 `aggregation: "raw"` 表示按记录读取数值列，适用于柱状、饼图、折线、雷达、桑基、热力图及组合子图。各图仍适用各自的预览上限。长表热力图每个行列组合、分组雷达图每个指标系列组合须各有至多一条可绘制记录；重复时接口返回 HTTP 400。
+
 <a name="api-specialty-charts"></a>
 
 ## 雷达图与桑基图
@@ -480,6 +523,8 @@ PNG 响应带有 `X-Eye-Bar-Renderer: 4`。绘制显著性标注时，绘图区�
 | `heatmap` | 长表模式用 `categoryColumn` 为行、`groupColumn` 为列，可按合计、记录数、平均值、最大值或最小值着色。宽表模式用 `layout: "wide"` 将 `valueColumns` 按选择顺序绘为列。缺失格显示灰色，最多 24 行、16 列。 |
 
 散点图返回 `series` 和 `xType`。日期或类别横轴附带 `points`，供前端显示刻度文字。渲染样式支持 `markerShape`（`circle`、`square`、`triangle`、`diamond`、`cross`）、`markerSize`、`opacity`、`hollow`、`showGrid` 和 `showLegend`。数值横轴可用 `fit` 显示线性拟合及 R²、RMSE，用 `referenceLine` 显示 `y = x`。
+
+热力图 PNG 的分辨率由渲染请求中的 `style.dpi` 控制，可选整数 130（默认）、200 或 300。
 
 宽表取数示例。以 `year` 为行，读取 `Q1` 至 `Q4` 的原值。`rowMin`、`rowMax` 为可选的数值行范围，包含端点。行字段重复时可使用 `sum`、`average`、`min` 或 `max` 分别汇总每列。
 

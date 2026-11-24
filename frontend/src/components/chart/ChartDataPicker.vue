@@ -12,13 +12,18 @@
         </select>
       </label>
       <label>
-        数据表
-        <select v-model="table" :disabled="!tables.length || Boolean(loading)">
-          <option value="">{{ loading === 'tables' ? '正在读取表…' : '请选择数据表' }}</option>
-          <option v-for="name in tables" :key="name">{{ name }}</option>
+        数据表 / 视图
+        <select v-model="table" :disabled="!hasSources || Boolean(loading)">
+          <option value="">{{ loading === 'tables' ? '正在读取数据源…' : '请选择数据表或视图' }}</option>
+          <optgroup v-if="tables.length" label="数据表">
+            <option v-for="name in tables" :key="name">{{ name }}</option>
+          </optgroup>
+          <optgroup v-if="views.length" label="视图">
+            <option v-for="name in views" :key="name">{{ name }}</option>
+          </optgroup>
         </select>
       </label>
-      <p v-if="connectionId && !loading && !error && !tables.length">这个数据库没有可读取的数据表。</p>
+      <p v-if="connectionId && !loading && !error && !hasSources">这个数据库没有可读取的数据表或视图。</p>
       <label>
         {{ categoryLabel }}
         <select v-model="categoryColumn" :disabled="!columns.length || Boolean(loading)">
@@ -103,20 +108,20 @@
 </template>
 
 <script>
-import { getDatabaseTable, listDatabaseConnections, listDatabaseTables } from '../../api/database.js'
+import { getChartSource, listDatabaseConnections, listChartSources } from '../../api/database.js'
 
 const numericType = /^(tinyint|smallint|mediumint|int|integer|bigint|decimal|numeric|float|double|real|year)\b/i
 const categoryType = /^(char|varchar|tinytext|text|mediumtext|longtext|enum|set|date|datetime|timestamp|time|bool|boolean)\b/i
 const aggregationLabels = {
   sum: '合计 (SUM)', average: '平均值 (AVG)', count: '记录数 (COUNT)',
   max: '最大值 (MAX)', min: '最小值 (MIN)', share: '占比 (SUM / SUM)',
-  raw: '原值（每行一条记录）',
+  raw: '原始记录（每行一条记录）',
 }
 
 export default {
   name: 'ChartDataPicker',
   props: {
-    aggregations: { type: Array, default: () => Object.keys(aggregationLabels).filter(mode => mode !== 'raw') },
+    aggregations: { type: Array, default: () => Object.keys(aggregationLabels) },
     categoryLabel: { type: String, default: '分类字段' },
     groupLabel: { type: String, default: '系列字段' },
     groupMode: { type: String, default: 'none' },
@@ -127,7 +132,7 @@ export default {
   },
   data() {
     return {
-      connections: [], tables: [], columns: [],
+      connections: [], tables: [], views: [], columns: [],
       connectionId: '', table: '', categoryColumn: '', groupColumn: '', valueColumn: '', secondaryValueColumn: '',
       valueColumns: [], rowMin: '', rowMax: '', maxPoints: 500,
       aggregation: this.aggregations[0], aggregationLabels,
@@ -135,6 +140,7 @@ export default {
     }
   },
   computed: {
+    hasSources() { return Boolean(this.tables.length || this.views.length) },
     selectedGroup() {
       return this.groupMode !== 'none' && this.groupColumn !== this.categoryColumn &&
         (!this.rawPoints || this.groupColumn !== this.valueColumn) ? this.groupColumn : ''
@@ -236,13 +242,17 @@ export default {
       const request = ++this._metadataRequest
       this.table = ''
       this.tables = []
+      this.views = []
       this.clearColumns()
       this.error = ''
       this.loading = this.connectionId ? 'tables' : ''
       if (!this.connectionId) return
       try {
-        const result = await listDatabaseTables(this.connectionId)
-        if (request === this._metadataRequest) this.tables = result.tables
+        const result = await listChartSources(this.connectionId)
+        if (request === this._metadataRequest) {
+          this.tables = result.tables
+          this.views = result.views
+        }
       } catch (error) {
         if (request === this._metadataRequest) this.error = error.message
       } finally {
@@ -256,7 +266,7 @@ export default {
       this.loading = this.table ? 'columns' : ''
       if (!this.table) return
       try {
-        const result = await getDatabaseTable(this.table, this.connectionId)
+        const result = await getChartSource(this.table, this.connectionId)
         if (request === this._metadataRequest) this.columns = result.columns
       } catch (error) {
         if (request === this._metadataRequest) this.error = error.message

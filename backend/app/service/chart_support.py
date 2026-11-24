@@ -1,11 +1,11 @@
 from hashlib import sha256
 
-from sqlalchemy import column, func, inspect, select, table
+from sqlalchemy import column, func, inspect, or_, select, table
 from sqlalchemy.dialects.mysql import YEAR
-from sqlalchemy.exc import NoSuchTableError
 from sqlalchemy.sql import quoted_name
 from sqlalchemy.types import Boolean, Date, DateTime, Float, Integer, Numeric, String, Time
 
+from app.service.database_catalog import reflect_source
 from app.service.database_connection import database_engine_for_connection
 from app.util.chart import ChartError, chart_number, chart_object, chart_text
 
@@ -24,10 +24,7 @@ AGGREGATIONS = {
 def grouping_columns(connection, table_name, category_name, metric_name, group_name="", *,
                      numeric_axis=False, numeric_group=False, extra_metrics=()):
     """校验所选列，并生成带标识符引用的 SQLAlchemy 列。"""
-    inspector = inspect(connection)
-    if table_name not in inspector.get_table_names():
-        raise NoSuchTableError(table_name)
-    types = {item["name"]: item["type"] for item in inspector.get_columns(table_name)}
+    types = {item["name"]: item["type"] for item in reflect_source(inspect(connection), table_name)}
     axis_types = NUMERIC_TYPES if numeric_axis else CATEGORY_TYPES
     group_types = NUMERIC_TYPES if numeric_group else CATEGORY_TYPES
     if not isinstance(types.get(category_name), axis_types) or (
@@ -51,6 +48,8 @@ def paired_totals(payload, limit, *, allowed=("count", "sum"), by_category=False
     aggregation = chart_text(payload, "aggregation", required=True)
     if aggregation not in allowed:
         raise ChartError("所选聚合方式无效。")
+    if aggregation == "raw":
+        return original_rows(payload, limit, grouped=True)
     connection_id = chart_text(payload, "connectionId", required=True)
     table_name = chart_text(payload, "table", required=True)
     category_name = chart_text(payload, "categoryColumn", required=True)
@@ -76,6 +75,42 @@ def paired_totals(payload, limit, *, allowed=("count", "sum"), by_category=False
     if rows and aggregation == "share" and rows[0][2] is None:
         raise ChartError("数值字段的总和为 0，无法计算占比。")
     return rows[:limit], len(rows) > limit, f"{metric_name}（{label}）" if metric_name else label
+
+
+def original_rows(payload, limit, *, grouped=False, secondary=""):
+    """按横轴取原始记录，保留同值的多行。"""
+    connection_id = chart_text(payload, "connectionId", required=True)
+    table_name = chart_text(payload, "table", required=True)
+    category_name = chart_text(payload, "categoryColumn", required=True)
+    metric_name = chart_text(payload, "valueColumn", required=True)
+    group_name = chart_text(payload, "groupColumn", required=True) if grouped else ""
+    if category_name == group_name or (grouped and secondary):
+        raise ChartError("请选择不同的横轴和系列字段。")
+    with database_engine_for_connection(connection_id) as engine, engine.connect() as connection:
+        source, category, metric = grouping_columns(
+            connection, table_name, category_name, metric_name, group_name or secondary,
+            numeric_group=bool(secondary),
+        )
+        columns = [category, metric]
+        conditions = [category.is_not(None), metric.is_not(None)]
+        if grouped:
+            group = source.c[group_name]
+            columns = [category, group, metric]
+            conditions.append(group.is_not(None))
+        elif secondary:
+            extra = source.c[secondary]
+            columns.append(extra)
+            conditions[1] = or_(metric.is_not(None), extra.is_not(None))
+        query = select(*columns).where(*conditions).order_by(*columns).limit(limit + 1)
+        rows = connection.execute(query).all()
+    return rows[:limit], len(rows) > limit, f"{metric_name}（原始记录）"
+
+
+def original_point(category, value, index):
+    """让同名分类中的每条原始记录有独立的绘图标识。"""
+    point = category_point(category, value, stable_key=True)
+    point["key"] = f"row:{index}:{point['key']}"
+    return point
 
 
 def category_point(category, value, stable_key: bool = False) -> dict:

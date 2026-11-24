@@ -1,3 +1,5 @@
+from collections import Counter
+
 from app.service.cartesian_charts import load_line_data, load_scatter_data
 from app.service.scatter_style import draw_scatter_guides, draw_scatter_series, scatter_style
 from app.util.chart import (
@@ -114,9 +116,24 @@ def _overlay_series_style(layer, index, name):
     return (style if index == 0 else {**style, "color": f"C{index}"}), label
 
 
+def _original_bar_slots(positions, total_width):
+    """同一横轴值有多条记录时，在该位置并排画柱。"""
+    counts = Counter(positions)
+    used = Counter()
+    slots = []
+    for x in positions:
+        width = total_width / counts[x]
+        slots.append((x + (used[x] - (counts[x] - 1) / 2) * width, width))
+        used[x] += 1
+    return slots
+
+
 def draw_subplot_layer(axes, layer, positions, index, bar_width, font, *, overlay=False):
     """将一个子图的全部系列画在共享坐标轴上。"""
-    kind, series = layer["kind"], layer["data"]["series"]
+    kind, data = layer["kind"], layer["data"]
+    series = data["series"]
+    raw = data.get("rawRecords")
+    slots = _original_bar_slots(positions, bar_width) if kind == "bar" and raw else []
     point_positions = dict(zip((point["x"] for point in layer["data"]["points"]), positions)) if kind == "scatter" else {}
     plotted = False
     for series_index, item in enumerate(series):
@@ -130,13 +147,18 @@ def draw_subplot_layer(axes, layer, positions, index, bar_width, font, *, overla
         if kind == "bar":
             width = bar_width / len(series)
             offset = (series_index - (len(series) - 1) / 2) * width
-            present = [(x + offset, value) for x, value in zip(positions, item["values"]) if value is not None]
+            bar_slots = slots if raw else [(x + offset, width) for x in positions]
+            present = [(x, value, size) for (x, size), value in zip(bar_slots, item["values"]) if value is not None]
             if present:
-                xs, ys = zip(*present)
-                draw_bars(axes, xs, ys, width=width, zorder=2 + index / 10, **options)
+                xs, ys, widths = zip(*present)
+                draw_bars(axes, xs, ys, width=widths, zorder=2 + index / 10, **options)
                 plotted = True
         elif positions:
             xy = sorted(zip(positions, item["values"]), key=lambda point: point[0])
+            if raw and len(series) > 1:
+                xy = [pair for pair in xy if pair[1] is not None]
+            if not xy:
+                continue
             xs, values = zip(*xy)
             ys = [value if value is not None else float("nan") for value in values]
             draw_line(axes, xs, ys, markers=style["markers"] or len(positions) == 1,

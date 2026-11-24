@@ -45,6 +45,13 @@
               </select>
             </label>
             <label class="check"><input v-model="showValues" type="checkbox"> 显示单元格数值</label>
+            <label class="field">导出清晰度
+              <select v-model.number="heatmapDpi">
+                <option :value="130">130 DPI（标准）</option>
+                <option :value="200">200 DPI（高清）</option>
+                <option :value="300">300 DPI（超清）</option>
+              </select>
+            </label>
           </template>
         </template>
       </chart-editor-controls>
@@ -86,7 +93,7 @@ import { chartPalettes } from '../data/chartPalettes.js'
 import { createScatterStyle } from '../data/scatterStyle.js'
 
 const format = new Intl.NumberFormat('zh-CN', { maximumSignificantDigits: 8 })
-const baseAggregations = ['sum', 'average', 'count', 'max', 'min']
+const baseAggregations = ['sum', 'average', 'count', 'max', 'min', 'raw']
 const wideAggregations = ['raw', 'sum', 'average', 'max', 'min']
 const chartEditors = {
   radar_chart: { kind: 'radar', title: '雷达图', categoryLabel: '指标字段', groupLabel: '系列字段', groupMode: 'optional', dataHeading: '指标数据' },
@@ -104,7 +111,7 @@ export default {
       selection: null, dataset: null, palettes: chartPalettes, paletteId: 'classic',
       title: '', fill: true, flowOpacity: 0.4, loading: false, rendering: false, imageUrl: '',
       showFlowValues: false,
-      heatmapLayout: 'long',
+      heatmapLayout: 'long', heatmapDpi: 130,
       showMarkers: true, colorMap: 'Blues', showValues: true,
       scatter: createScatterStyle(), scatterXLabel: '', scatterYLabel: '',
       scatterShowGrid: true, scatterShowLegend: true,
@@ -118,7 +125,7 @@ export default {
     wideHeatmap() { return this.kind === 'heatmap' && this.heatmapLayout === 'wide' },
     aggregations() {
       if (this.wideHeatmap) return wideAggregations
-      return ['line', 'heatmap'].includes(this.kind) ? baseAggregations : ['sum', 'count']
+      return ['line', 'heatmap'].includes(this.kind) ? baseAggregations : ['sum', 'count', 'raw']
     },
     automaticTitle() {
       if (!this.dataset || !this.selection) return this.config.title
@@ -166,6 +173,7 @@ export default {
           legendLabel: this.dataset.seriesName, fill: this.fill, flowOpacity: this.flowOpacity,
           ...(this.kind === 'sankey' ? { showFlowValues: this.showFlowValues } : {}),
           showMarkers: this.showMarkers, colorMap: this.colorMap, showValues: this.showValues,
+          ...(this.kind === 'heatmap' ? { dpi: this.heatmapDpi } : {}),
           xLabel: (this.selection.layout === 'wide' ? '数值列'
             : this.kind === 'heatmap' ? this.selection.groupColumn : this.selection.categoryColumn).slice(0, 60),
           yLabel: (this.kind === 'heatmap' ? this.selection.categoryColumn

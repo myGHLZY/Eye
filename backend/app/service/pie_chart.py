@@ -2,7 +2,7 @@ from io import BytesIO
 
 from sqlalchemy import func, select, true
 
-from app.service.chart_support import AGGREGATIONS, category_point, grouping_columns
+from app.service.chart_support import AGGREGATIONS, category_point, grouping_columns, original_point, original_rows
 from app.service.database_connection import database_engine_for_connection
 
 from app.util.chart import (
@@ -19,6 +19,17 @@ def load_pie_data(payload) -> dict:
     """按分类读取可组成饼图的总量，必要时合并长尾分类。"""
     payload = chart_object(payload)
     aggregation = payload.get("aggregation")
+    if aggregation == "raw":
+        rows, truncated, name = original_rows(payload, MAX_SLICES)
+        if any(value < 0 for _, value in rows):
+            raise ChartError("饼图需要非负数值，请换一个数值字段或按记录数统计。")
+        points = [original_point(category, value, index) for index, (category, value) in enumerate(rows) if value > 0]
+        for point in points:
+            point["label"] = point["label"] or "空字符串"
+        return {
+            "points": points, "seriesName": name, "total": sum(point["value"] for point in points),
+            "combined": False, "truncated": truncated,
+        }
     if aggregation not in ("count", "sum", "average", "max", "min"):
         raise ChartError("所选聚合方式无效。")
     connection_id = chart_text(payload, "connectionId", required=True)

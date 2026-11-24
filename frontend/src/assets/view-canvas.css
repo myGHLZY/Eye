@@ -1,0 +1,51 @@
+.view-canvas { display: grid; gap: 12px; }
+.view-canvas .canvas-toolbar { display: flex; align-items: end; justify-content: space-between; gap: 12px; }
+.view-canvas .canvas-toolbar p { margin: 0; max-width: 74ch; color: #52647d; font-size: 13px; line-height: 1.55; }
+.view-canvas .canvas-join-type { flex: 0 0 120px; }
+.view-canvas .canvas-workspace {
+  display: grid; grid-template-columns: minmax(122px, 155px) minmax(0, 1fr);
+  min-width: 0; min-height: 290px; border: 1px solid #dfe7f1; border-radius: 8px;
+}
+.view-canvas .canvas-sources { padding: 10px; display: grid; gap: 8px; align-content: start; min-width: 0; }
+.view-canvas .canvas-source-list { max-height: 350px; overflow: auto; }
+.view-canvas .canvas-sources h3, .view-canvas .canvas-destinations h3 { font-size: 14px; }
+.view-canvas .canvas-source-list h4 { font-size: 12px; color: #52647d; margin: 8px 0 4px; }
+.view-canvas .canvas-source-list button {
+  display: block; width: 100%; margin: 4px 0; text-align: left; overflow-wrap: anywhere; cursor: grab;
+}
+.view-canvas .canvas-board {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 36px;
+  align-items: start; position: relative; padding: 17px; min-width: 0;
+  border-left: 1px solid #dfe7f1; background-color: #f7faff;
+  background-image: radial-gradient(#d3ddea 1px, transparent 1px); background-size: 14px 14px;
+}
+.view-canvas .canvas-wires { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.view-canvas .canvas-table, .view-canvas .canvas-destinations {
+  position: relative; display: grid; gap: 7px; min-width: 0;
+  background: #fff; border: 1px solid #cdd9e9; border-radius: 8px; padding: 9px;
+}
+.view-canvas .canvas-table.table-empty { border-style: dashed; min-height: 84px; background: #ffffffdb; }
+.view-canvas .canvas-table-header { display: flex; align-items: start; justify-content: space-between; gap: 6px; }
+.view-canvas .canvas-table-header div { min-width: 0; font-size: 12px; color: #52647d; }
+.view-canvas .canvas-table-header strong { display: block; font-size: 14px; color: #172942; overflow-wrap: anywhere; }
+.view-canvas .canvas-empty { margin: 5px 0; color: #52647d; font-size: 12px; }
+.view-canvas .canvas-column-list { list-style: none; margin: 0; padding: 0; max-height: 345px; overflow: auto; }
+.view-canvas .canvas-column { display: flex; gap: 4px; align-items: stretch; padding: 2px 0; }
+.view-workspace .view-canvas .canvas-field {
+  flex: 1; display: flex; flex-direction: column; align-items: flex-start; gap: 3px;
+  min-width: 0; padding: 4px 6px; text-align: left; overflow-wrap: anywhere; cursor: grab;
+}
+.view-canvas .canvas-field small { font-size: 11px; color: #52647d; }
+.view-workspace .view-canvas [aria-pressed='true'] { border-color: #86afe5; background: #e9f2ff; }
+.view-canvas .canvas-output-button { flex: 0 0 30px; }
+.view-canvas .canvas-role {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 6px; min-height: 44px; padding: 5px;
+  border: 1px dashed #9eb5d1; border-radius: 6px; background: #f8fbff;
+}
+.view-canvas .canvas-role .canvas-token { border-color: #86afe5; background: #e9f2ff; overflow-wrap: anywhere; }
+.view-canvas .canvas-summary { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; font-size: 13px; }
+@media (max-width: 720px) {
+  .view-canvas .canvas-workspace { grid-template-columns: minmax(0, 1fr); }
+  .view-canvas .canvas-board { border-left: 0; border-top: 1px solid #dfe7f1; gap: 24px; }
+  .view-canvas .canvas-source-list { max-height: 155px; }
+}

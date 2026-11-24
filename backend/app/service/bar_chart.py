@@ -4,7 +4,7 @@ from math import sqrt
 from sqlalchemy import func, select
 
 from app.service.bar_chart_annotations import comparisons, draw_bar_labels, draw_comparisons, error_bars
-from app.service.chart_support import AGGREGATIONS, category_point, grouping_columns, paired_totals
+from app.service.chart_support import AGGREGATIONS, category_point, grouping_columns, original_point, original_rows, paired_totals
 from app.service.database_connection import database_engine_for_connection
 from app.util.chart import (
     DPI_OPTIONS, ChartError, chart_font, chart_number, chart_object, chart_points, chart_text, draw_bars, figure_png,
@@ -26,11 +26,17 @@ LEGEND_POSITIONS = {"auto": "best", "top-right": "upper right", "top-left": "upp
 
 
 
-def load_bar_data(payload) -> dict:
+def load_bar_data(payload, *, separate_original=True) -> dict:
     """按所选分类聚合 MySQL 数据并返回柱状图数据点。"""
     payload = chart_object(payload)
     if payload.get("groupColumn"):
-        return _load_grouped_bars(payload)
+        return _load_grouped_bars(payload, separate_original=separate_original)
+    if payload.get("aggregation") == "raw":
+        rows, truncated, name = original_rows(payload, MAX_BARS)
+        return {
+            "points": [original_point(category, value, index) for index, (category, value) in enumerate(rows)],
+            "seriesName": name, "truncated": truncated,
+        }
     connection_id = chart_text(payload, "connectionId", required=True)
     table_name = chart_text(payload, "table", required=True)
     category_name = chart_text(payload, "categoryColumn", required=True)
@@ -82,15 +88,31 @@ def _data_point(category, value, sample_size=None, sample_sd=None) -> dict:
     return point
 
 
-def _load_grouped_bars(payload) -> dict:
+def _load_grouped_bars(payload, *, separate_original) -> dict:
     """将两字段的汇总结果展开为横轴分类和系列矩阵。"""
-    rows, truncated, name = paired_totals(payload, MAX_BARS * MAX_SERIES, allowed=AGGREGATIONS)
+    raw = payload.get("aggregation") == "raw"
+    if raw and separate_original:
+        rows, truncated, name = original_rows(payload, MAX_BARS, grouped=True)
+        groups = list(dict.fromkeys(group for _, group, _ in rows))
+        if len(groups) > MAX_SERIES:
+            raise ChartError(f"系列最多 {MAX_SERIES} 个，请选择分类较少的字段。")
+        points = [original_point(category, value, index) for index, (category, _, value) in enumerate(rows)]
+        series = [
+            {"key": category_point(group, 0, stable_key=True)["key"], "label": str(group)[:120] or "空字符串", "values": [
+                chart_number(value) if member == group else 0 for _, member, value in rows
+            ]} for group in groups
+        ]
+        return {"points": points, "series": series, "seriesName": name, "truncated": truncated}
+
+    rows, truncated, name = paired_totals(payload, MAX_BARS * MAX_SERIES, allowed=(*AGGREGATIONS, "raw"))
     categories = list(dict.fromkeys(category for category, _, _ in rows))
     groups = list(dict.fromkeys(group for _, group, _ in rows))
     if truncated or len(categories) > MAX_BARS or len(groups) > MAX_SERIES:
         raise ChartError(f"横轴最多 {MAX_BARS} 个分类，系列最多 {MAX_SERIES} 个，请选择分类较少的字段。")
 
     values = {(category, group): chart_number(value) for category, group, value in rows}
+    if raw and len(values) != len(rows):
+        raise ChartError("原始记录模式下每个指标和系列只能对应一条记录，请选择聚合方式。")
     series = [
         {**category_point(group, 0, stable_key=True), "values": [values.get((category, group), 0) for category in categories]}
         for group in groups

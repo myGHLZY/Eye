@@ -1,9 +1,10 @@
 from datetime import date, datetime
 from decimal import Decimal
+from math import isnan
 
 from sqlalchemy import literal, or_, select
 
-from app.service.chart_support import AGGREGATIONS, category_point, grouping_columns, paired_totals
+from app.service.chart_support import AGGREGATIONS, category_point, grouping_columns, original_rows, paired_totals
 from app.service.database_connection import database_engine_for_connection
 from app.service.scatter_style import draw_scatter_guides, draw_scatter_series, scatter_style
 from app.util.chart import (
@@ -40,6 +41,8 @@ def load_line_data(payload) -> dict:
     payload = chart_object(payload)
     mode = chart_text(payload, "aggregation", required=True)
     secondary = chart_text(payload, "secondaryValueColumn")
+    if mode == "raw":
+        return _load_original_line(payload, secondary)
     if mode not in LINE_AGGREGATIONS:
         raise ChartError("所选聚合方式无效。")
     if payload.get("groupColumn"):
@@ -105,6 +108,37 @@ def load_line_data(payload) -> dict:
     }
     if secondary:
         result["secondaryName"] = f"{secondary}（{label}）"
+    return result
+
+
+def _load_original_line(payload, secondary):
+    """保留重复横轴下的明细，并使不同系列各自按实际记录连线。"""
+    grouped = bool(payload.get("groupColumn"))
+    rows, truncated, name = original_rows(payload, MAX_LINE_POINTS, grouped=grouped, secondary=secondary)
+    groups = list(dict.fromkeys(row[1] for row in rows)) if grouped else []
+    if len(groups) > MAX_SERIES:
+        raise ChartError(f"折线图最多支持 {MAX_SERIES} 个系列。")
+    categories, points = {}, []
+    for row in rows:
+        category = row[0]
+        value = row[-1] if grouped else row[1]
+        ordinal = categories.setdefault(category, len(categories))
+        point = {**category_point(category, 0 if value is None else value), "x": _line_x(category, ordinal)}
+        if secondary:
+            point["value"] = None if value is None else point["value"]
+            point["secondary"] = None if row[2] is None else chart_number(row[2])
+        points.append(point)
+    result = {
+        "points": points, "seriesName": name, "truncated": truncated, "rawRecords": True,
+        "xType": _axis_type(rows[0][0]) if rows else None,
+        "series": [
+            {"label": str(group)[:120] or "空字符串",
+             "values": [point["value"] if row[1] == group else None for row, point in zip(rows, points)]}
+            for group in groups
+        ],
+    }
+    if secondary:
+        result["secondaryName"] = f"{secondary}（原始记录）"
     return result
 
 
@@ -200,7 +234,8 @@ def render_line_chart(payload):
         point = chart_object(raw)
         positions.append(_number(point.get("x", index)))
         labels.append(chart_text(point, "label"))
-        values.append(_number(point.get("value")))
+        value = point.get("value")
+        values.append(_number(value) if value is not None else float("nan"))
     lines = [(chart_text(style, "legendLabel"), values)]
     if series:
         lines = []
@@ -216,8 +251,13 @@ def render_line_chart(payload):
         palette = _palette(style)
         show_markers = style_flag(style, "showMarkers", True)
         for index, (label, values) in enumerate(lines):
-            draw_line(axes, positions, values, color=palette[index % len(palette)],
-                      markers=show_markers or len(points) == 1, label=label[:24])
+            plotted = list(zip(positions, values))
+            if series and payload.get("rawRecords"):
+                plotted = [(x, y) for x, y in plotted if not isnan(y)]
+            if plotted:
+                xs, ys = zip(*plotted)
+                draw_line(axes, xs, ys, color=palette[index % len(palette)],
+                          markers=show_markers or len(xs) == 1, label=label[:24])
         set_chart_ticks(axes, list(zip(positions, labels)), font, 25 if len(points) > 5 else 0,
                         max_labels=10, label_length=20, fontsize=9)
         _legend(axes, style, font)

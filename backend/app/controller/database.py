@@ -6,6 +6,7 @@ from app.database.database import DatabaseConfigurationError
 
 from app.service.bar_chart import BAR_RENDERER_REVISION, load_bar_data, render_bar_chart
 from app.service.cartesian_charts import load_line_data, load_scatter_data, render_line_chart, render_scatter_chart
+from app.service.database_catalog import describe_chart_source, list_chart_sources
 from app.service.database_connection import (
     DatabaseConnectionError,
     DatabaseConnectionNotFoundError,
@@ -17,11 +18,13 @@ from app.service.database_connection import (
 )
 from app.service.pie_chart import load_pie_data, render_pie_chart
 from app.service.heatmap_chart import load_heatmap_data, render_heatmap_chart
+from app.service.database_views import create_view, list_pivot_categories, preview_saved_view, preview_view
 from app.service.radar_chart import load_radar_data, render_radar_chart
 from app.service.sankey_chart import load_sankey_data, render_sankey_chart
 from app.service.subplot_chart import render_subplot_chart
 from app.service.table_rows import TableRowsError, list_table_rows, mutate_table_rows
 from app.service.table_schema import get_schema_diagram, get_table_schema, list_tables
+from app.service.view_fields import ViewError
 from app.util.chart import ChartError
 from app.util.response import ok
 
@@ -63,6 +66,42 @@ def disconnect(connection_id: str):
 @blueprint.get("/tables")
 def tables():
     return _database_response(list_tables, request.args.get("connectionId"))
+
+
+@blueprint.get("/sources")
+def chart_sources():
+    """列出可用于图表和视图工作台的数据源。"""
+    return _database_response(list_chart_sources, request.args.get("connectionId"))
+
+
+@blueprint.get("/sources/detail")
+def chart_source_detail():
+    """读取数据表或视图的字段名称与类型。"""
+    return _database_response(describe_chart_source, request.args.get("connectionId"), request.args.get("name", ""))
+
+
+@blueprint.post("/views/preview")
+def view_preview():
+    """生成定义并预览可视化构建结果。"""
+    return _database_response(preview_view, _read_json(128 * 1024))
+
+
+@blueprint.post("/views/categories")
+def view_categories():
+    """获取转宽表时可选的类别值。"""
+    return _database_response(list_pivot_categories, _read_json(128 * 1024))
+
+
+@blueprint.post("/views")
+def save_view():
+    """创建用户已确认的视图。"""
+    return _database_response(create_view, _read_json(128 * 1024), status=201)
+
+
+@blueprint.get("/views/rows")
+def view_rows():
+    """预览已保存视图的前 20 行。"""
+    return _database_response(preview_saved_view, request.args.get("connectionId"), request.args.get("name"))
 
 
 @blueprint.get("/schema/diagram")
@@ -195,6 +234,8 @@ def _database_response(read, *args, row_request=False, status=200, chart_error="
         response = ok(read(*args))
     except ChartError as error:
         return _error(400, chart_error, str(error))
+    except ViewError as error:
+        return _error(error.status, "DATABASE_VIEW_FAILED", str(error))
     except TableRowsError as error:
         return _error(error.status, error.code, str(error))
     except DatabaseConfigurationError:
@@ -202,7 +243,7 @@ def _database_response(read, *args, row_request=False, status=200, chart_error="
     except DatabaseConnectionNotFoundError:
         return _error(404, "DATABASE_CONNECTION_NOT_FOUND", "找不到这条数据库连接。")
     except NoSuchTableError:
-        return _error(404, "TABLE_NOT_FOUND", "当前数据库中找不到这张表，请刷新表列表。")
+        return _error(404, "TABLE_NOT_FOUND", "当前数据库中找不到此数据源，请刷新列表。")
     except SQLAlchemyError as error:
         if row_request:
             return _table_rows_database_error(error)

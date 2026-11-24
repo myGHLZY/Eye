@@ -51,6 +51,12 @@
                   :aria-current="activeMenu === 'data-sources' ? 'page' : null"
                   class="nav-item"
                 >数据库连接</el-menu-item>
+                <el-menu-item
+                  index="database-views"
+                  :route="{ name: 'database-views' }"
+                  :aria-current="activeMenu === 'database-views' ? 'page' : null"
+                  class="nav-item"
+                >视图</el-menu-item>
               </template>
               <template v-else>
                 <el-menu-item
@@ -174,6 +180,12 @@ const navigation = [
         title: '数据库连接',
         component: () => import('./DatabaseConnectionView.vue'),
       },
+      {
+        name: 'database-views',
+        path: 'database/views',
+        title: '视图',
+        component: () => import('./DatabaseViewsView.vue'),
+      },
     ],
   },
   {
@@ -181,6 +193,12 @@ const navigation = [
     title: '可视化',
     icon: 'el-icon-data-analysis',
     items: [
+      {
+        name: 'chart-showcase',
+        path: 'visualization/showcase',
+        title: '展示',
+        component: () => import('./ChartShowcaseView.vue'),
+      },
       {
         ...visualizationCategories.lines_bars_and_markers,
         component: () => import('./ChartTypesView.vue'),

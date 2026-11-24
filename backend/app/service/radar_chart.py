@@ -10,7 +10,7 @@ MAX_AXES = 12
 
 def load_radar_data(payload) -> dict:
     """把分类汇总结果用作雷达图的各个指标轴。"""
-    data = load_bar_data(payload)
+    data = load_bar_data(payload, separate_original=False)
     data["truncated"] = data["truncated"] or len(data["points"]) > MAX_AXES
     data["points"] = data["points"][:MAX_AXES]
     for series in data.get("series", []):

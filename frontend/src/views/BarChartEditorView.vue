@@ -66,7 +66,8 @@
           :busy="loadingData || rendering" :error="dataError || renderError" :empty-message="emptyMessage"
           filename="bar-chart.png">
           <p v-if="dataset?.truncated" class="preview-note">
-            共展示数值最高的 {{ dataset.points.length }} 个分类。
+            <span v-if="selection?.aggregation === 'raw'">按横轴顺序显示前 {{ dataset.points.length }} 条记录。</span>
+            <span v-else>共展示数值最高的 {{ dataset.points.length }} 个分类。</span>
             <span v-if="dataset.valueUnit === '%'">占比按全部分类的总和计算。</span>
           </p>
           <button v-if="points.length" type="button" class="convert-button" :disabled="!canConvert"

@@ -18,8 +18,8 @@
 <script>
 import ChartDataPicker from './ChartDataPicker.vue'
 
-const numericAggregations = ['sum', 'average', 'max', 'min']
-const aggregations = ['sum', 'count', 'average', 'max', 'min']
+const numericAggregations = ['sum', 'average', 'max', 'min', 'raw']
+const aggregations = ['sum', 'count', 'average', 'max', 'min', 'raw']
 
 export default {
   name: 'SubplotDataFields',

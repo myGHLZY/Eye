@@ -11,7 +11,7 @@ FLOW_X = (0.03, 0.37, 0.63, 0.97)
 
 def load_sankey_data(payload) -> dict:
     """按来源和目标统计带方向的正流量。"""
-    rows, truncated, name = paired_totals(payload, MAX_FLOWS)
+    rows, truncated, name = paired_totals(payload, MAX_FLOWS, allowed=("count", "sum", "raw"))
     if any(value < 0 for _, _, value in rows):
         raise ChartError("桑基图需要非负流量。")
     flows = []

@@ -3,10 +3,11 @@ from sqlalchemy import select
 from app.service.chart_support import AGGREGATIONS, grouping_columns, paired_totals
 from app.service.database_connection import database_engine_for_connection
 from app.util.chart import (
-    ChartError, chart_font, chart_number, chart_object, chart_text, figure_png, render_lock, style_choice, style_flag,
+    DPI_OPTIONS, ChartError, chart_font, chart_number, chart_object, chart_text, figure_png, render_lock,
+    style_choice, style_flag,
 )
 
-MAX_ROWS, MAX_COLUMNS = 24, 16
+MAX_ROWS, MAX_COLUMNS = 30, 16
 WIDE_AGGREGATIONS = ("raw", "sum", "average", "max", "min")
 
 
@@ -74,13 +75,15 @@ def load_heatmap_data(payload) -> dict:
     payload = chart_object(payload)
     if style_choice(payload, "layout", ("long", "wide"), "long") == "wide":
         return _load_wide_heatmap(payload)
-    allowed = tuple(code for code in AGGREGATIONS if code != "share")
+    allowed = (*[code for code in AGGREGATIONS if code != "share"], "raw")
     entries, truncated, name = paired_totals(payload, MAX_ROWS * MAX_COLUMNS, allowed=allowed, by_category=True)
     rows = list(dict.fromkeys(row for row, _, _ in entries))
     columns = list(dict.fromkeys(column for _, column, _ in entries))
     if truncated or len(rows) > MAX_ROWS or len(columns) > MAX_COLUMNS:
         raise ChartError(f"热力图最多支持 {MAX_ROWS} 行和 {MAX_COLUMNS} 列，请缩小分类数量。")
     cells = {(row, column): chart_number(value) for row, column, value in entries}
+    if payload.get("aggregation") == "raw" and len(cells) != len(entries):
+        raise ChartError("每个热力图单元格只能有一条原始记录，请选择合计或平均值等聚合方式。")
     return {
         "rows": [str(row)[:120] or "空字符串" for row in rows],
         "columns": [str(column)[:120] or "空字符串" for column in columns],
@@ -108,6 +111,7 @@ def render_heatmap_chart(payload):
         ):
             raise ChartError()
         matrix.append([chart_number(value) if value is not None else float("nan") for value in row])
+    dpi = style_choice(style, "dpi", DPI_OPTIONS, 130)
 
     with render_lock:
         import numpy as np
@@ -117,7 +121,7 @@ def render_heatmap_chart(payload):
         font = chart_font()
         palette = style_choice(style, "colorMap", ("Blues", "YlOrRd", "viridis", "coolwarm"), "Blues")
         color_map = colormaps[palette].with_extremes(bad="#edf2f7")
-        figure = Figure(figsize=(9, 6), dpi=130, layout="constrained", facecolor="#ffffff")
+        figure = Figure(figsize=(9, 6), dpi=dpi, layout="constrained", facecolor="#ffffff")
         axes = figure.subplots()
         image = axes.imshow(np.ma.masked_invalid(matrix), cmap=color_map, aspect="auto")
         axes.set_xticks(range(len(columns)), [name[:15] for name in columns], rotation=35, ha="right",

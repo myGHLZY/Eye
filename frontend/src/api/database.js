@@ -65,6 +65,30 @@ export function getDatabaseTable(name, connectionId) {
   return readSchema('/api/database/tables/detail', connectionId, { name })
 }
 
+export function listChartSources(connectionId) {
+  return readSchema('/api/database/sources', connectionId)
+}
+
+export function getChartSource(name, connectionId) {
+  return readSchema('/api/database/sources/detail', connectionId, { name })
+}
+
+export function previewView(payload) {
+  return requestDatabase('/api/database/views/preview', 'POST', payload)
+}
+
+export function listViewCategories(payload) {
+  return requestDatabase('/api/database/views/categories', 'POST', payload)
+}
+
+export function createDatabaseView(payload) {
+  return requestDatabase('/api/database/views', 'POST', payload)
+}
+
+export function previewSavedView(connectionId, name) {
+  return readSchema('/api/database/views/rows', connectionId, { name })
+}
+
 export function getDatabaseDiagram(connectionId) {
   return readSchema('/api/database/schema/diagram', connectionId)
 }

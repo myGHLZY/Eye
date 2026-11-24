@@ -73,6 +73,7 @@
           filename="pie-chart.png">
           <p v-if="dataset?.fromBar" class="note">按原柱状图当前展示的分类数值转换。</p>
           <p v-if="dataset && dataset.combined" class="note">较小的分类已合并为「其他分类」，占比按全部数据计算。</p>
+          <p v-if="dataset?.truncated" class="note">只展示部分原始记录，占比按当前展示的数值计算。</p>
         </chart-preview>
         <section v-if="points.length" class="panel">
           <h2>扇区数据</h2>
@@ -111,7 +112,7 @@ export default {
   components: { ChartColorPicker, ChartDataPicker, ChartEditorControls, ChartPalettePicker, ChartPreview },
   data() {
     return {
-      selection: null, dataset: null, aggregations: ['sum', 'average', 'count', 'max', 'min'],
+      selection: null, dataset: null, aggregations: ['sum', 'average', 'count', 'max', 'min', 'raw'],
       autoRefresh: false, palettes: chartPalettes, paletteId: 'classic', highlight: '', colors: {},
       style: {
         title: '', legendTitle: '', legendPosition: 'right', labelMode: 'percent',

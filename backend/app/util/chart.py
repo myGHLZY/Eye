@@ -130,6 +130,7 @@ def set_chart_ticks(axes, ticks, font, rotation=None, *, max_labels=6, label_len
     """为分类或时间横轴抽取刻度，并保留最后一个值。"""
     if not ticks:
         return
+    ticks = list(dict(ticks).items())
     step = max(1, ceil((len(ticks) - 1) / max(1, max_labels - 1)))
     visible = list(ticks[::step])
     if visible[-1] != ticks[-1]:
