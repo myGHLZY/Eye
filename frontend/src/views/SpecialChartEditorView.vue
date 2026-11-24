@@ -10,11 +10,18 @@
               <option value="wide">宽表（多个数值列）</option>
             </select>
           </label>
+          <label v-if="kind === 'errorbar'" class="field">数据模式
+            <select v-model="errorbarSource">
+              <option value="samples">原始样本</option>
+              <option value="column">估计值与误差字段</option>
+            </select>
+          </label>
           <chart-data-picker v-model="selection" :aggregations="aggregations"
             :category-label="config.categoryLabel" :group-label="config.groupLabel"
-            :sample-mode="sampleMode" :numeric-category="kind === 'scatter-histogram'"
+            :sample-mode="sampleMode" :numeric-category="isPairChart || kind === 'scatter-histogram'"
             :group-mode="wideHeatmap ? 'none' : config.groupMode" :wide-metrics="wideHeatmap"
-            :value-label="isScatter ? '纵轴数值' : sampleMode ? '样本数值字段' : '数值字段'" :raw-points="isScatter" />
+            :value-label="valueLabel" :raw-points="isScatter || isPairChart || usesErrorColumn"
+            :point-limit="isScatter" :secondary-label="usesErrorColumn ? '纵向误差字段' : ''" />
           <label v-if="hasBins" class="field">分箱数量
             <select v-model.number="bins">
               <option v-for="count in binOptions" :key="count" :value="count">{{ count }}</option>
@@ -30,7 +37,7 @@
           <button v-if="selection" type="button" :disabled="loading" @click="loadData">刷新数据</button>
         </template>
         <template #style>
-          <chart-palette-picker v-if="kind !== 'heatmap'" :palettes="palettes" :active-id="paletteId"
+          <chart-palette-picker v-if="!isColorMapChart" :palettes="palettes" :active-id="paletteId"
             @select="paletteId = $event.id" />
           <label class="field">图表标题
             <input v-model="title" type="text" maxlength="60" :placeholder="automaticTitle">
@@ -59,13 +66,36 @@
           <label v-if="kind === 'boxplot'" class="check">
             <input v-model="showFliers" type="checkbox"> 显示离群点
           </label>
-          <template v-if="kind === 'heatmap'">
-            <label class="field">热力配色
-              <select v-model="colorMap">
-                <option value="Blues">蓝色</option><option value="YlOrRd">黄红色</option>
-                <option value="viridis">紫绿渐变</option><option value="coolwarm">冷暖对比</option>
+          <label v-if="kind === 'errorbar' && !usesErrorColumn" class="field">误差口径
+            <select v-model="errorMeasure">
+              <option value="sd">样本标准差（SD）</option>
+              <option value="sem">标准误（SEM）</option>
+            </select>
+          </label>
+          <label v-if="kind === 'confidence-ellipse'" class="field">分布覆盖率
+            <select v-model.number="ellipseCoverage">
+              <option :value="68">68%</option><option :value="90">90%</option>
+              <option :value="95">95%</option><option :value="99">99%</option>
+            </select>
+          </label>
+          <label v-if="kind === 'violin'" class="check">
+            <input v-model="showExtrema" type="checkbox"> 显示最小值和最大值
+          </label>
+          <label v-if="isColorMapChart" class="field">{{ kind === 'heatmap' ? '热力配色' : '密度配色' }}
+            <select v-model="colorMap">
+              <option value="Blues">蓝色</option><option value="YlOrRd">黄红色</option>
+              <option value="viridis">紫绿渐变</option><option value="coolwarm">冷暖对比</option>
+            </select>
+          </label>
+          <template v-if="kind === 'hexbin'">
+            <label class="field">横向网格数
+              <select v-model.number="hexGridSize">
+                <option v-for="size in hexGridOptions" :key="size" :value="size">{{ size }}</option>
               </select>
             </label>
+            <label class="check"><input v-model="hexLogScale" type="checkbox"> 对数色阶</label>
+          </template>
+          <template v-if="kind === 'heatmap'">
             <label class="check"><input v-model="showValues" type="checkbox"> 显示单元格数值</label>
             <label class="field">导出清晰度
               <select v-model.number="heatmapDpi">
@@ -82,9 +112,10 @@
           :busy="loading || rendering" :error="dataError || previewError" :empty-message="emptyMessage"
           :filename="kind + '-chart.png'">
           <p v-if="dataset?.truncated" class="note">已达到预览上限，按当前顺序展示部分数据。</p>
+          <p v-if="kind === 'confidence-ellipse' && dataset?.samples.length" class="note">椭圆按二维正态分布计算覆盖率。</p>
         </chart-preview>
         <section v-if="rows.length" class="panel">
-          <h2>{{ config.dataHeading }}</h2>
+          <h2>{{ config.dataHeading }}{{ kind === 'cumulative' && dataset.points.length > 100 ? '（前 100 个数值）' : '' }}</h2>
           <div class="table-scroll">
             <table>
               <thead><tr>
@@ -119,6 +150,7 @@ const percent = new Intl.NumberFormat('zh-CN', { style: 'percent', maximumFracti
 const baseAggregations = ['sum', 'average', 'count', 'max', 'min', 'raw']
 const wideAggregations = ['raw', 'sum', 'average', 'max', 'min']
 const binOptions = [5, 10, 15, 20, 30, 40, 50, 80]
+const hexGridOptions = [10, 20, 30, 40, 60, 80]
 const chartEditors = {
   radar_chart: { kind: 'radar', title: '雷达图', categoryLabel: '指标字段', groupLabel: '系列字段', groupMode: 'optional', dataHeading: '指标数据' },
   sankey_basics: { kind: 'sankey', title: '桑基图', categoryLabel: '来源字段', groupLabel: '目标字段', groupMode: 'required', dataHeading: '流量数据' },
@@ -129,6 +161,11 @@ const chartEditors = {
   hist: { kind: 'histogram', title: '直方图', groupMode: 'none', dataHeading: '分箱数据' },
   boxplot_demo: { kind: 'boxplot', title: '箱线图', groupLabel: '分组字段（可选）', groupMode: 'optional', dataHeading: '箱线统计' },
   bar_of_pie: { kind: 'bar-of-pie', title: '饼图与构成柱图', categoryLabel: '主类别字段', groupLabel: '子类别字段', groupMode: 'required', dataHeading: '所选扇区构成' },
+  errorbar: { kind: 'errorbar', title: '误差棒图', categoryLabel: '横轴字段', groupMode: 'none', dataHeading: '估计值与误差' },
+  confidence_ellipse: { kind: 'confidence-ellipse', title: '二维置信椭圆', categoryLabel: '横轴数值', groupMode: 'none', dataHeading: '样本范围' },
+  histogram_cumulative: { kind: 'cumulative', title: '累计分布图', groupMode: 'none', dataHeading: '累计分布数据' },
+  hexbin_demo: { kind: 'hexbin', title: '六边形密度图', categoryLabel: '横轴数值', groupMode: 'none', dataHeading: '样本范围' },
+  violinplot: { kind: 'violin', title: '小提琴图', groupLabel: '分组字段（可选）', groupMode: 'optional', dataHeading: '分组四分位数' },
   specialty_heatmap: { kind: 'heatmap', title: '热力图', categoryLabel: '行字段', groupLabel: '列字段', groupMode: 'required', dataHeading: '矩阵数据' },
 }
 
@@ -141,10 +178,12 @@ export default {
       title: '', fill: true, flowOpacity: 0.4, loading: false, rendering: false, imageUrl: '',
       showFlowValues: false,
       heatmapLayout: 'long', heatmapDpi: 130,
-      showMarkers: true, colorMap: 'Blues', showValues: true,
+      showMarkers: true, colorMap: this.$route.params.chartId === 'hexbin_demo' ? 'viridis' : 'Blues', showValues: true,
       scatter: createScatterStyle(), scatterXLabel: '', scatterYLabel: '',
       scatterShowGrid: true, scatterShowLegend: true,
       binOptions, bins: 20, histogramPercent: false, showFliers: true, pieDetailKey: '',
+      errorbarSource: 'samples', errorMeasure: 'sd', ellipseCoverage: 95,
+      hexGridOptions, hexGridSize: 30, hexLogScale: false, showExtrema: true,
       dataError: '', previewError: '',
     }
   },
@@ -153,13 +192,22 @@ export default {
     kind() { return this.config.kind },
     isRadar() { return this.kind === 'radar' },
     isScatter() { return this.kind === 'scatter' || this.kind === 'scatter-histogram' },
-    sampleMode() { return this.kind === 'histogram' || this.kind === 'boxplot' },
+    isPairChart() { return this.kind === 'confidence-ellipse' || this.kind === 'hexbin' },
+    isColorMapChart() { return this.kind === 'heatmap' || this.kind === 'hexbin' },
+    sampleMode() { return ['histogram', 'boxplot', 'cumulative', 'violin'].includes(this.kind) },
+    usesErrorColumn() { return this.kind === 'errorbar' && this.errorbarSource === 'column' },
+    valueLabel() {
+      if (this.isScatter || this.isPairChart) return '纵轴数值'
+      if (this.usesErrorColumn) return '估计值字段'
+      return this.sampleMode || this.kind === 'errorbar' ? '样本数值字段' : '数值字段'
+    },
     hasBins() { return this.kind === 'histogram' || this.kind === 'scatter-histogram' },
     wideHeatmap() { return this.kind === 'heatmap' && this.heatmapLayout === 'wide' },
     aggregations() {
       if (this.wideHeatmap) return wideAggregations
       if (this.kind === 'stacked-area') return baseAggregations.filter(mode => mode !== 'raw')
       if (this.kind === 'bar-of-pie') return ['sum', 'count']
+      if (this.kind === 'errorbar') return ['average']
       return ['line', 'heatmap'].includes(this.kind) ? baseAggregations : ['sum', 'count', 'raw']
     },
     dataSelection() {
@@ -173,6 +221,7 @@ export default {
     automaticTitle() {
       if (!this.dataset || !this.selection) return this.config.title
       if (this.isScatter) return `${this.selection.categoryColumn} · ${this.selection.valueColumn}`
+      if (this.isPairChart || this.kind === 'errorbar') return `${this.dataset.xLabel} · ${this.dataset.yLabel}`
       if (this.sampleMode) return [this.selection.valueColumn, this.selection.groupColumn].filter(Boolean).join(' · ')
       if (this.selection.layout === 'wide') return `${this.selection.table} · ${this.selection.categoryColumn} · ${this.dataset.seriesName}`
       const { categoryColumn, groupColumn } = this.selection
@@ -187,6 +236,11 @@ export default {
       ]
       if (this.kind === 'histogram') return ['分箱区间', '频数', '占比']
       if (this.kind === 'boxplot') return ['分组', '样本数', '下须', 'Q1', '中位数', 'Q3', '上须', '离群点数']
+      if (this.kind === 'violin') return ['分组', '样本数', 'Q1', '中位数', 'Q3']
+      if (this.kind === 'cumulative') return ['样本值', '累计频数', '累计占比']
+      if (this.isPairChart) return ['样本对数', '横轴最小值', '横轴最大值', '纵轴最小值', '纵轴最大值']
+      if (this.kind === 'errorbar') return this.dataset?.errorMode === 'column'
+        ? ['横轴', '估计值', '纵向误差'] : ['横轴', '样本数', '平均值', 'SD', 'SEM']
       if (this.kind === 'bar-of-pie') return ['子类别', '数值', '扇区内占比']
       if (this.kind === 'heatmap') return ['行 / 列', ...(this.dataset?.columns || [])]
       return [this.isRadar ? '指标' : '横轴', ...(this.series.length ? this.series.map(item => item.label) : ['数值'])]
@@ -215,6 +269,28 @@ export default {
         box.label, ...[box.count, box.whislo, box.q1, box.med, box.q3, box.whishi, box.fliers.length]
           .map(value => format.format(value)),
       ])
+      if (this.kind === 'violin') return this.dataset.groups.map(group => [
+        group.label, format.format(group.samples.length), ...group.quartiles.map(value => format.format(value)),
+      ])
+      if (this.kind === 'cumulative') {
+        let total = 0
+        return this.dataset.points.slice(0, 100).map(([value, count]) => {
+          total += count
+          return [format.format(value), format.format(total), percent.format(total / this.dataset.sampleCount)]
+        })
+      }
+      if (this.isPairChart) {
+        const { samples, ranges } = this.dataset
+        return samples.length ? [[samples.length, ...ranges.flat()].map(value => format.format(value))] : []
+      }
+      if (this.kind === 'errorbar') {
+        const usingColumn = this.dataset.errorMode === 'column'
+        return this.dataset.points.map(point => [
+          point.label, ...(usingColumn ? [point.value, point.error]
+            : [point.sampleSize, point.value, point.sampleSd, point.sampleSem])
+            .map(value => value == null ? '—' : format.format(value)),
+        ])
+      }
       if (this.kind === 'bar-of-pie') {
         return this.selectedPie?.parts.map(part => [
           part.label || '空字符串', format.format(part.value), percent.format(part.value / this.selectedPie.value),
@@ -230,7 +306,10 @@ export default {
     },
     axisLabels() {
       if (this.kind === 'histogram') return [this.dataset.xLabel, this.histogramPercent ? '百分比' : '频数']
-      if (this.kind === 'boxplot') return [this.dataset.xLabel, this.dataset.yLabel]
+      if (this.kind === 'cumulative') return [this.dataset.xLabel, '累计占比']
+      if (this.isPairChart || ['boxplot', 'violin', 'errorbar'].includes(this.kind)) {
+        return [this.dataset.xLabel, this.dataset.yLabel]
+      }
       if (this.isScatter) return [
         this.scatterXLabel || this.selection.categoryColumn, this.scatterYLabel || this.selection.valueColumn,
       ]
@@ -261,6 +340,10 @@ export default {
           ...(this.kind === 'scatter-histogram' ? { bins: this.bins } : {}),
           ...(this.kind === 'histogram' ? { histogramPercent: this.histogramPercent } : {}),
           ...(this.kind === 'boxplot' ? { showFliers: this.showFliers } : {}),
+          ...(this.kind === 'errorbar' ? { errorMeasure: this.errorMeasure } : {}),
+          ...(this.kind === 'confidence-ellipse' ? { coverage: this.ellipseCoverage } : {}),
+          ...(this.kind === 'hexbin' ? { gridSize: this.hexGridSize, logScale: this.hexLogScale } : {}),
+          ...(this.kind === 'violin' ? { showExtrema: this.showExtrema } : {}),
         },
       }
     },

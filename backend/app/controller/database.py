@@ -21,13 +21,18 @@ from app.service.database_connection import (
     test_connection,
 )
 from app.service.distribution_charts import (
-    load_boxplot_data, load_histogram_data, render_boxplot_chart, render_histogram_chart,
+    load_boxplot_data, load_cumulative_data, load_histogram_data, load_violin_data,
+    render_boxplot_chart, render_cumulative_chart, render_histogram_chart, render_violin_chart,
 )
 from app.service.pie_chart import load_pie_data, render_pie_chart
 from app.service.heatmap_chart import load_heatmap_data, render_heatmap_chart
 from app.service.database_views import create_view, list_pivot_categories, preview_saved_view, preview_view
 from app.service.radar_chart import load_radar_data, render_radar_chart
 from app.service.sankey_chart import load_sankey_data, render_sankey_chart
+from app.service.statistical_charts import (
+    load_errorbar_data, load_numeric_pair_data, render_confidence_ellipse_chart, render_errorbar_chart,
+    render_hexbin_chart,
+)
 from app.service.subplot_chart import render_subplot_chart
 from app.service.table_rows import TableRowsError, list_table_rows, mutate_table_rows
 from app.service.table_schema import get_schema_diagram, get_table_schema, list_tables
@@ -45,8 +50,16 @@ ADDITIONAL_CHARTS = {
     "histogram": (load_histogram_data, render_histogram_chart),
     "boxplot": (load_boxplot_data, render_boxplot_chart),
     "bar-of-pie": (load_bar_of_pie_data, render_bar_of_pie_chart),
+    "errorbar": (load_errorbar_data, render_errorbar_chart),
+    "confidence-ellipse": (load_numeric_pair_data, render_confidence_ellipse_chart),
+    "cumulative": (load_cumulative_data, render_cumulative_chart),
+    "hexbin": (load_numeric_pair_data, render_hexbin_chart),
+    "violin": (load_violin_data, render_violin_chart),
 }
-LARGE_CHARTS = {"scatter", "scatter-histogram", "boxplot"}
+CHART_RENDER_LIMITS_KIB = {
+    "scatter": 384, "scatter-histogram": 384, "boxplot": 384, "cumulative": 384, "violin": 384,
+    "confidence-ellipse": 640, "hexbin": 640,
+}
 
 
 @blueprint.before_request
@@ -208,7 +221,7 @@ def additional_chart(kind, action):
     error_code = f"INVALID_{kind.upper().replace('-', '_')}_CHART"
     if action == "data":
         return _database_response(load, _read_json(32 * 1024), chart_error=error_code)
-    maximum = 384 * 1024 if kind in LARGE_CHARTS else 96 * 1024
+    maximum = CHART_RENDER_LIMITS_KIB.get(kind, 96) * 1024
     return _chart_image(render, f"{kind}-chart.png", error_code, maximum=maximum)
 
 

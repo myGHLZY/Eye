@@ -42,7 +42,7 @@
           </option>
         </select>
       </label>
-      <label v-if="!rawValues">
+      <label v-if="!rawValues && aggregations.length > 1">
         聚合方式
         <select v-model="aggregation">
           <option v-for="mode in aggregations" :key="mode" :value="mode">{{ aggregationLabels[mode] }}</option>
@@ -89,7 +89,7 @@
             :key="column.name" :value="column.name">{{ column.name }} · {{ column.type }}</option>
         </select>
       </label>
-      <label v-if="rawPoints">最多绘制点数
+      <label v-if="rawPoints && pointLimit">最多绘制点数
         <select v-model.number="maxPoints">
           <option :value="100">100</option><option :value="250">250</option><option :value="500">500</option>
         </select>
@@ -129,6 +129,7 @@ export default {
     valueLabel: { type: String, default: '数值字段' },
     secondaryLabel: { type: String, default: '' },
     rawPoints: Boolean,
+    pointLimit: { type: Boolean, default: true },
     sampleMode: Boolean,
     numericCategory: Boolean,
     wideMetrics: Boolean,
@@ -190,7 +191,8 @@ export default {
       }
       return {
         connectionId, table, categoryColumn,
-        ...(this.rawPoints ? { valueColumn, maxPoints: this.maxPoints } : { aggregation, valueColumn: aggregation === 'count' ? '' : valueColumn }),
+        ...(this.rawPoints ? { valueColumn, ...(this.pointLimit ? { maxPoints: this.maxPoints } : {}) }
+          : { aggregation, valueColumn: aggregation === 'count' ? '' : valueColumn }),
         ...(this.selectedGroup ? { groupColumn: this.selectedGroup } : {}),
         ...(this.secondaryLabel ? { secondaryValueColumn: this.secondaryValueColumn } : {}),
       }

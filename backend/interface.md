@@ -44,6 +44,11 @@
 | POST | [`/api/database/charts/histogram/{data,render}`](#api-histogram) | 查询分箱频数、渲染直方图 |
 | POST | [`/api/database/charts/boxplot/{data,render}`](#api-boxplot) | 查询箱线统计、渲染箱线图 |
 | POST | [`/api/database/charts/bar-of-pie/{data,render}`](#api-bar-of-pie) | 查询主类别和子类别构成、渲染饼图与构成柱图 |
+| POST | [`/api/database/charts/errorbar/{data,render}`](#api-errorbar) | 查询估计值与纵向误差、渲染误差棒图 |
+| POST | [`/api/database/charts/confidence-ellipse/{data,render}`](#api-confidence-ellipse) | 查询二维样本、渲染置信椭圆 |
+| POST | [`/api/database/charts/cumulative/{data,render}`](#api-cumulative) | 查询各值频数、渲染经验累计分布图 |
+| POST | [`/api/database/charts/hexbin/{data,render}`](#api-hexbin) | 查询二维样本、渲染六边形频数图 |
+| POST | [`/api/database/charts/violin/{data,render}`](#api-violin) | 查询分组样本及四分位数、渲染小提琴图 |
 | POST | [`/api/database/charts/subplot/render`](#api-subplot-chart) | 读取并渲染多子图组合 |
 
 <a name="api-health"></a>
@@ -588,6 +593,50 @@ PNG 响应带有 `X-Eye-Bar-Renderer: 4`。绘制显著性标注时，绘图区�
 
 - `POST /api/database/charts/bar-of-pie/data` 接收 `categoryColumn`（主类别）、`groupColumn`（子类别）、`aggregation`（`sum` 或 `count`）和 `valueColumn`（使用 `count` 时可省略）。返回 `seriesName`、默认展开的 `detailKey` 和 `points`。每个主类别含 `key`、`label`、`value` 和 `parts`，子类别含 `label` 和 `value`。汇总值须非负，图中省略为 0 的项。最多 12 个主类别，每个主类别最多 12 个子类别。
 - `POST /api/database/charts/bar-of-pie/render` 接收 `points`，可通过 `detailKey` 切换展开的主类别，缺省时展开第一项。构成柱按扇区内占比堆叠为 100%，子类别数值之和须与该扇区一致。[Matplotlib 示例](https://matplotlib.org/stable/gallery/pie_and_polar_charts/bar_of_pie.html)
+
+## 误差与统计分布图表
+
+以下 `data` 接口均需传入已保存的 `connectionId` 和表或视图名 `table`，成功时以 `data` 包装结果。将结果对象与可选的 `style` 传给对应的 `render` 接口可生成 `image/png`。共用样式包括 `title`、`xLabel`、`yLabel`（各最多 60 字符）、`showGrid` 和 `colors`。六边形密度图使用连续色阶 `colorMap`。
+
+取数请求体上限为 32 KiB。误差棒图的渲染请求体上限为 96 KiB，累计分布图和小提琴图为 384 KiB，二维置信椭圆和六边形密度图为 640 KiB。参数或样本不满足要求时返回 HTTP 400 和对应的 `INVALID_<图表类型>_CHART`，请求体超限返回 HTTP 413。
+
+<a name="api-errorbar"></a>
+
+### 误差棒图
+
+- `POST /api/database/charts/errorbar/data` 接收 `categoryColumn`（横轴）和 `valueColumn`。默认按横轴分组计算平均值，`points` 的每项含 `x`、`label`、`value`（均值）、`sampleSize`、`sampleSd`（样本标准差）及 `sampleSem`（样本标准差除以样本数的平方根）。仅有一个样本时，两种误差均为空。
+- 指定 `secondaryValueColumn` 时读取已有估计值及非负对称纵向误差，每个横轴值对应一条记录，点中返回 `error`。两种模式均跳过所选字段中存在空值的记录，最多返回按横轴升序排列的 96 个点。顶层包含 `xLabel`、`yLabel`、`errorMode`（`samples` 或 `column`）和 `truncated`。
+- `POST /api/database/charts/errorbar/render` 接收 `points` 和 `errorMode`。样本模式支持 `style.errorMeasure` 为 `sd`（默认）或 `sem`，没有误差值的点只画估计值标记。[Matplotlib 示例](https://matplotlib.org/stable/gallery/statistics/errorbar.html)
+
+二维置信椭圆和六边形密度图的数据接口都用 `categoryColumn` 和 `valueColumn` 选择横纵轴数值字段，返回 `samples: [[x, y], …]`、`xLabel`、`yLabel` 和 `ranges`。`ranges` 依次为横轴、纵轴的最小最大值，空结果返回空数组。任一坐标为空的记录会被过滤，最多读取 10,000 对完整样本。样本超限时可通过视图筛选。
+
+<a name="api-confidence-ellipse"></a>
+
+### 二维置信椭圆
+
+- `POST /api/database/charts/confidence-ellipse/data` 查询二维样本。
+- `POST /api/database/charts/confidence-ellipse/render` 接收 `samples`，用 `style.coverage` 选择 68、90、95（默认）或 99。至少需要三对样本，两个变量均需有变化且样本不能近似共线。椭圆用样本均值、协方差和二维正态分布覆盖率计算，表示样本分布区域。[Matplotlib 示例](https://matplotlib.org/stable/gallery/statistics/confidence_ellipse.html)
+
+<a name="api-cumulative"></a>
+
+### 累计分布图
+
+- `POST /api/database/charts/cumulative/data` 接收 `valueColumn`，返回升序排列的 `points: [[值, 该值频数], …]`、`sampleCount` 和 `xLabel`。同值计作一次阶跃，跳过空值，最多读取 10,000 个有效样本。
+- `POST /api/database/charts/cumulative/render` 接收 `points`，以每个数值处小于或等于该值的样本占比绘制经验累计分布。图表包含所有已读取样本，编辑器显示前 100 个不同数值的累计频数与占比。[Matplotlib 示例](https://matplotlib.org/stable/gallery/statistics/histogram_cumulative.html)
+
+<a name="api-hexbin"></a>
+
+### 六边形密度图
+
+- `POST /api/database/charts/hexbin/data` 查询二维样本。
+- `POST /api/database/charts/hexbin/render` 接收 `samples`。`style.gridSize` 为横向六边形网格数，支持 10 至 80，默认 30。`style.colorMap` 支持 `Blues`、`YlOrRd`、`viridis`（默认）和 `coolwarm`。可设置 `style.logScale: true` 使用对数色阶。每格按落入的样本对数着色，色条标注频数。[Matplotlib 示例](https://matplotlib.org/stable/gallery/statistics/hexbin_demo.html)
+
+<a name="api-violin"></a>
+
+### 小提琴图
+
+- `POST /api/database/charts/violin/data` 接收 `valueColumn` 和可选的 `groupColumn`。返回 `xLabel`、`yLabel` 和 `groups`，每组含 `label`、`samples` 以及按 Q1、中位数、Q3 顺序排列的 `quartiles`。未指定分组时显示一个小提琴，最多支持 12 组和 10,000 个有效样本。跳过数值为空的记录，指定分组时也会跳过分组为空的记录。
+- `POST /api/database/charts/violin/render` 接收 `groups`，按组绘制样本的核密度与中位数。`style.showExtrema: false` 可隐藏最小值和最大值。常量或单样本分组显示其数值位置。[Matplotlib 示例](https://matplotlib.org/stable/gallery/statistics/violinplot.html)
 
 <a name="api-subplot-chart"></a>
 

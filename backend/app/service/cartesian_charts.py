@@ -1,10 +1,10 @@
-from datetime import date, datetime
-from decimal import Decimal
 from math import isnan
 
 from sqlalchemy import literal, or_, select
 
-from app.service.chart_support import AGGREGATIONS, category_point, grouping_columns, original_rows, paired_totals
+from app.service.chart_support import (
+    AGGREGATIONS, axis_position, axis_type, category_point, grouping_columns, original_rows, paired_totals,
+)
 from app.service.database_connection import database_engine_for_connection
 from app.service.distribution_charts import histogram_bins, histogram_edges
 from app.service.scatter_style import draw_scatter_guides, draw_scatter_series, scatter_style
@@ -18,24 +18,6 @@ MAX_LINE_POINTS = 96
 MAX_SCATTER_POINTS = 500
 MAX_SERIES = 8
 LINE_AGGREGATIONS = tuple(code for code in AGGREGATIONS if code != "share")
-
-
-def _line_x(value, index):
-    """将数字或日期转换成真实横轴坐标，文本类别按等距排列。"""
-    if isinstance(value, datetime):
-        return value.toordinal() + (value.hour * 3600 + value.minute * 60 + value.second + value.microsecond / 1e6) / 86400
-    if isinstance(value, date):
-        return value.toordinal()
-    if type(value) in (int, float, Decimal):
-        return chart_number(value)
-    return index
-
-
-def _axis_type(value):
-    """区分可按实际间距对齐的横轴类型。"""
-    if isinstance(value, date):
-        return "date"
-    return "number" if type(value) in (int, float, Decimal) else "category"
 
 
 def load_line_data(payload, *, chart_name="折线图") -> dict:
@@ -66,12 +48,12 @@ def load_line_data(payload, *, chart_name="折线图") -> dict:
             for group in groups
         ]
         points = [
-            {**category_point(category, 0), "x": _line_x(category, index)}
+            {**category_point(category, 0), "x": axis_position(category, index)}
             for index, category in enumerate(categories)
         ]
         return {
             "points": points, "series": series, "seriesName": name, "truncated": truncated,
-            "xType": _axis_type(categories[0]) if categories else None,
+            "xType": axis_type(categories[0]) if categories else None,
         }
 
     connection_id = chart_text(payload, "connectionId", required=True)
@@ -98,7 +80,7 @@ def load_line_data(payload, *, chart_name="折线图") -> dict:
     points = []
     for index, (category, value, *additional) in enumerate(rows[:MAX_LINE_POINTS]):
         point = category_point(category, 0 if value is None else value)
-        point["x"] = _line_x(category, index)
+        point["x"] = axis_position(category, index)
         if additional:
             point["value"] = point["value"] if value is not None else None
             point["secondary"] = chart_number(additional[0]) if additional[0] is not None else None
@@ -106,7 +88,7 @@ def load_line_data(payload, *, chart_name="折线图") -> dict:
     result = {
         "points": points, "series": [], "seriesName": f"{metric_name}（{label}）" if metric_name else label,
         "truncated": len(rows) > MAX_LINE_POINTS,
-        "xType": _axis_type(rows[0][0]) if rows else None,
+        "xType": axis_type(rows[0][0]) if rows else None,
     }
     if secondary:
         result["secondaryName"] = f"{secondary}（{label}）"
@@ -125,14 +107,14 @@ def _load_original_line(payload, secondary):
         category = row[0]
         value = row[-1] if grouped else row[1]
         ordinal = categories.setdefault(category, len(categories))
-        point = {**category_point(category, 0 if value is None else value), "x": _line_x(category, ordinal)}
+        point = {**category_point(category, 0 if value is None else value), "x": axis_position(category, ordinal)}
         if secondary:
             point["value"] = None if value is None else point["value"]
             point["secondary"] = None if row[2] is None else chart_number(row[2])
         points.append(point)
     result = {
         "points": points, "seriesName": name, "truncated": truncated, "rawRecords": True,
-        "xType": _axis_type(rows[0][0]) if rows else None,
+        "xType": axis_type(rows[0][0]) if rows else None,
         "series": [
             {"label": str(group)[:120] or "空字符串",
              "values": [point["value"] if row[1] == group else None for row, point in zip(rows, points)]}
@@ -162,7 +144,7 @@ def load_scatter_data(payload, *, numeric_x=False) -> dict:
         group = source.c[group_name] if group_name else literal("数据")
         query = select(x, y, group).where(x.is_not(None), y.is_not(None), group.is_not(None))
         rows = connection.execute(query.order_by(x, y, group).limit(raw_limit + 1)).all()
-    x_type = _axis_type(rows[0][0]) if rows else None
+    x_type = axis_type(rows[0][0]) if rows else None
     positions = {}
     groups = {}
     for x, y, group in rows[:raw_limit]:
@@ -170,7 +152,7 @@ def load_scatter_data(payload, *, numeric_x=False) -> dict:
             position = chart_number(x)
         else:
             if x not in positions:
-                positions[x] = {**category_point(x, 0), "x": _line_x(x, len(positions))}
+                positions[x] = {**category_point(x, 0), "x": axis_position(x, len(positions))}
             position = positions[x]["x"]
         groups.setdefault(group, []).append([position, chart_number(y)])
     if len(groups) > MAX_SERIES:

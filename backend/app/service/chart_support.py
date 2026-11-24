@@ -1,4 +1,7 @@
+from datetime import date, datetime
+from decimal import Decimal
 from hashlib import sha256
+from math import sqrt
 
 from sqlalchemy import column, func, inspect, or_, select, table
 from sqlalchemy.dialects.mysql import YEAR
@@ -11,6 +14,7 @@ from app.util.chart import ChartError, chart_number, chart_object, chart_text
 
 NUMERIC_TYPES = (Integer, Numeric, Float, YEAR)
 CATEGORY_TYPES = (String, Date, DateTime, Time, Boolean, *NUMERIC_TYPES)
+MAX_SAMPLES = 10_000
 AGGREGATIONS = {
     "sum": ("合计", func.sum),
     "average": ("平均值", func.avg),
@@ -40,6 +44,29 @@ def grouping_columns(connection, table_name, category_name, metric_name, group_n
     category = source.c[category_name]
     metric = source.c[metric_name] if metric_name else None
     return source, category, metric
+
+
+def read_sample_rows(connection, query):
+    """对需要完整样本的统计图限制取数规模。"""
+    rows = connection.execute(query.limit(MAX_SAMPLES + 1)).all()
+    if len(rows) > MAX_SAMPLES:
+        raise ChartError(f"此图最多读取 {MAX_SAMPLES:,} 条有效记录，请先用视图筛选数据。")
+    return rows
+
+
+def axis_type(value):
+    if isinstance(value, date):
+        return "date"
+    return "number" if type(value) in (int, float, Decimal) else "category"
+
+
+def axis_position(value, index):
+    """对数值和日期保留实际间距，文本按等距排列。"""
+    if isinstance(value, datetime):
+        return value.toordinal() + (value.hour * 3600 + value.minute * 60 + value.second + value.microsecond / 1e6) / 86400
+    if isinstance(value, date):
+        return value.toordinal()
+    return chart_number(value) if axis_type(value) == "number" else index
 
 
 def paired_totals(payload, limit, *, allowed=("count", "sum"), by_category=False):
@@ -119,4 +146,12 @@ def category_point(category, value, stable_key: bool = False) -> dict:
     point = {"label": name[:120], "value": chart_number(value)}
     if stable_key or len(name) > 120:
         point["key"] = sha256(name.encode("utf-8")).hexdigest()
+    return point
+
+
+def sample_point(category, value, sample_size=None, sample_sd=None):
+    point = category_point(category, value)
+    if sample_size is not None:
+        sd = chart_number(sample_sd) if sample_size >= 2 and sample_sd is not None else None
+        point.update(sampleSize=sample_size, sampleSd=sd, sampleSem=sd / sqrt(sample_size) if sd is not None else None)
     return point

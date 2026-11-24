@@ -1,10 +1,11 @@
 from io import BytesIO
-from math import sqrt
 
 from sqlalchemy import func, select
 
 from app.service.bar_chart_annotations import comparisons, draw_bar_labels, draw_comparisons, error_bars
-from app.service.chart_support import AGGREGATIONS, category_point, grouping_columns, original_point, original_rows, paired_totals
+from app.service.chart_support import (
+    AGGREGATIONS, category_point, grouping_columns, original_point, original_rows, paired_totals, sample_point,
+)
 from app.service.database_connection import database_engine_for_connection
 from app.util.chart import (
     DPI_OPTIONS, ChartError, chart_font, chart_number, chart_object, chart_points, chart_text, draw_bars, figure_png,
@@ -70,22 +71,13 @@ def load_bar_data(payload, *, separate_original=True) -> dict:
     if is_share and rows and rows[0][1] is None:
         raise ChartError("数值字段的总和为 0，无法计算占比。")
     result = {
-        "points": [_data_point(*row) for row in rows[:MAX_BARS]],
+        "points": [sample_point(*row) for row in rows[:MAX_BARS]],
         "seriesName": f"{metric_name}（{aggregation_label}）" if metric_name else aggregation_label,
         "truncated": len(rows) > MAX_BARS,
     }
     if is_share:
         result["valueUnit"] = "%"
     return result
-
-
-def _data_point(category, value, sample_size=None, sample_sd=None) -> dict:
-    """序列化一个分类，并附上平均值的样本统计。"""
-    point = category_point(category, value)
-    if sample_size is not None:
-        sd = chart_number(sample_sd) if sample_size >= 2 and sample_sd is not None else None
-        point.update(sampleSize=sample_size, sampleSd=sd, sampleSem=sd / sqrt(sample_size) if sd is not None else None)
-    return point
 
 
 def _load_grouped_bars(payload, *, separate_original) -> dict:

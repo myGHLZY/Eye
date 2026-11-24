@@ -305,7 +305,7 @@ export const mainRoutes = [
   },
   {
     name: 'chart-editor',
-    path: 'visualization/chart-editor/:chartId(hist|boxplot_demo|bar_of_pie)',
+    path: 'visualization/chart-editor/:chartId(hist|boxplot_demo|bar_of_pie|errorbar|confidence_ellipse|histogram_cumulative|hexbin_demo|violinplot)',
     component: () => import('./SpecialChartEditorView.vue'),
     meta: { title: '制作图表', section: '可视化', activeMenu: 'statistics-charts' },
   },
