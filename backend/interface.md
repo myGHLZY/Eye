@@ -11,6 +11,7 @@
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
 | GET | [`/api/health`](#api-health) | 检查 Flask 服务 |
+| POST | [`/api/point-clouds/preview`](#api-point-cloud-preview) | 上传单个点云文件并返回 3D 预览数据 |
 | GET | [`/api/database/connection`](#api-database-connection-read) | 读取当前连接配置 |
 | GET | [`/api/database/connections`](#api-database-connections) | 列出导航可用的数据库连接 |
 | DELETE | [`/api/database/connections/{connectionId}`](#api-database-connection-disconnect) | 断开并移除指定连接 |
@@ -58,6 +59,38 @@
 `GET /api/health`
 
 成功时返回 HTTP 200 和 `{"data":{"status":"ok"}}`。
+
+<a name="api-point-cloud-preview"></a>
+
+## 点云预览
+
+`POST /api/point-clouds/preview` 接收 `multipart/form-data`，用 `file` 上传一个文件。无需配置数据库连接。接口只读取文件并返回预览，应用不保存上传文件。
+
+| 扩展名 | 格式 |
+| --- | --- |
+| `.ply` | PLY 1.0 ASCII、大端或小端二进制。读取位于首组非空元素的顶点，忽略后续面和其他元素。 |
+| `.pcd` | PCD ASCII、二进制、LZF 压缩二进制。支持独立 RGB 字段及打包的 `rgb`、`rgba`。 |
+| `.las`、`.laz` | LAS、压缩 LAS，使用文件的缩放和偏移还原坐标，支持 RGB。 |
+| `.xyz`、`.xyzrgb`、`.pts`、`.csv`、`.tsv`、`.txt`、`.asc` | UTF-8 文本。支持空白、Tab、逗号或分号分列。可用 `x,y,z` 及可选的 `r,g,b` 或 `red,green,blue` 作表头，也可直接写 `X Y Z`、`X Y Z R G B` 或 `X Y Z 强度 R G B`。支持 PTS 首行点数。 |
+
+每个文件最多 128 MiB 和 800 万个点。接口跳过非有限坐标，统计全部有效点的坐标范围，在有效点超过 20 万时对全文件抽样。文本 RGB 依据全文件有效点的颜色范围自动适配 0–1、0–255 或 0–65535。
+
+```bash
+curl -F 'file=@cloud.ply' http://127.0.0.1:5111/api/point-clouds/preview
+```
+
+成功返回 HTTP 200，响应体为 `{"data":{...}}`。
+
+| 字段 | 说明 |
+| --- | --- |
+| `format` | 小写文件扩展名 |
+| `inputCount`、`pointCount`、`previewCount` | 源数据点数、有限坐标的点数、预览点数 |
+| `bounds.min`、`bounds.max` | 全部有效点在源坐标下的三个轴的最小和最大值 |
+| `origin`、`scale` | 渲染坐标原点和平移后的尺度，用 `源坐标 ≈ 渲染坐标 × scale + origin` 还原 |
+| `positions` | Base64 编码的小端 Float32 字节序列，按 XYZ 交错，每个预览点 12 字节 |
+| `colors` | Base64 编码的 Uint8 字节序列，按 RGB 交错，每个预览点 3 字节。无 RGB 时为 `null`。 |
+
+缺少文件或内容无效时返回 400，超过大小或点数限制时返回 413，不支持的扩展名返回 415。错误响应包括 `error.code` 和 `error.message`。
 
 <a name="api-database-connections"></a>
 

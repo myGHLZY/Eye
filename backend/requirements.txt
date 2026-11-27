@@ -3,3 +3,6 @@ python-dotenv>=1.0,<2
 SQLAlchemy>=2.0,<2.1
 PyMySQL[rsa]>=1.1,<2
 matplotlib>=3.9,<4
+numpy>=1.26,<3
+laspy[lazrs]>=2.5,<3
+python-neo-lzf>=0.3.5,<1

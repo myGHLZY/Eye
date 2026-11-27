@@ -200,6 +200,12 @@ const navigation = [
         component: () => import('./ChartShowcaseView.vue'),
       },
       {
+        name: 'point-cloud',
+        path: 'visualization/point-cloud',
+        title: '点云',
+        component: () => import('./PointCloudView.vue'),
+      },
+      {
         ...visualizationCategories.lines_bars_and_markers,
         component: () => import('./ChartTypesView.vue'),
       },

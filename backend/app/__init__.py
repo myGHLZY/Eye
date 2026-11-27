@@ -3,6 +3,7 @@ from flask import Flask, request
 from app.config.settings import load_settings
 from app.controller.database import blueprint as database_blueprint
 from app.controller.health import blueprint as health_blueprint
+from app.controller.point_cloud import blueprint as point_cloud_blueprint
 from app.database.database import init_database
 
 
@@ -13,6 +14,7 @@ def create_app() -> Flask:
     init_database(app)
     app.register_blueprint(health_blueprint)
     app.register_blueprint(database_blueprint)
+    app.register_blueprint(point_cloud_blueprint)
 
     @app.before_request
     def log_request() -> None:

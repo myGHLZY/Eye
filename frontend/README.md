@@ -24,6 +24,7 @@ npm run dev
 | 数据库 / 数据库连接 / 库名 | `/#/database/connections/:connectionId` | `src/views/TableSchemaView.vue` | 浏览表、字段及类型，查看主外键和表关系图 |
 | 数据库 / 视图 | `/#/database/views` | `src/views/DatabaseViewsView.vue` | 配置连接、转宽表和 SQL 查询，保留中间表，确认后创建 MySQL 视图 |
 | 可视化 / 展示 | `/#/visualization/showcase` | `src/views/ChartShowcaseView.vue` | 自动汇总所有已支持制作的彩色图例 |
+| 可视化 / 点云 | `/#/visualization/point-cloud` | `src/views/PointCloudView.vue` | 上传点云并交互查看 3D 预览 |
 | 可视化 / 折线、柱状图与标记 | `/#/visualization/chart-types` | `src/views/ChartTypesView.vue` | 38 个本地图例 |
 | 可视化 / 图像、等值线与场 | `/#/visualization/images-contours-fields` | `src/views/ImagesContoursView.vue` | 48 个本地图例 |
 | 可视化 / 统计图 | `/#/visualization/statistics` | `src/views/StatisticsView.vue` | 28 个本地图例 |
@@ -41,6 +42,12 @@ npm run dev
 六类图库共展示 174 个图例。已支持制作的图例以彩色显示，并排在各分类最前面。点击图片打开图表页面，其余图例使用灰度遮罩。 [Matplotlib 官方图库](https://matplotlib.org/stable/gallery/index.html) · [特殊图库](https://matplotlib.org/stable/gallery/specialty_plots/index.html)
 
 `npm run build` 会生成静态文件到 `dist/`。部署静态文件时，由站点的反向代理把同域的 `/api` 请求转发给 Flask。
+
+## 查看点云
+
+在「可视化 → 点云」选择或拖入 PLY、PCD、LAS、LAZ、XYZ、XYZRGB、PTS、CSV、TSV、TXT 或 ASC 文件，单文件最大 128 MiB。文本文件可使用带 XYZ 列名的表头，也可以直接从坐标数据开始。有效点超过 20 万时抽样预览。
+
+预览支持拖动旋转、滚轮缩放、右键拖动平移，还可以调整点大小、用 Z 高度着色或查看原始 RGB。页面需要浏览器支持 WebGL 2，上传接口无需配置 MySQL。[点云接口](../backend/interface.md#api-point-cloud-preview) · [Three.js WebGLRenderer](https://threejs.org/docs/pages/WebGLRenderer)
 
 ## 连接 MySQL
 
